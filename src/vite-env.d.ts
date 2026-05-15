@@ -1,0 +1,32 @@
+/// <reference types="vite/client" />
+
+export {};
+
+type AccountUser = { id: string; email: string; displayName?: string };
+
+declare global {
+  interface Window {
+    leeadman?: {
+      loadData: () => Promise<unknown>;
+      saveData: (data: unknown) => Promise<boolean>;
+      showNotification: (opts: { title?: string; body?: string }) => Promise<boolean>;
+      userDataPath: () => Promise<string>;
+      getAppVersion: () => Promise<string>;
+      checkForUpdates: () => Promise<{ ok: boolean; reason?: string; error?: string }>;
+      authStatus: () => Promise<{ enabled: boolean }>;
+      authSetPin: (payload: { pin: string }) => Promise<{ ok: boolean; error?: string }>;
+      authVerify: (payload: { pin: string }) => Promise<{ ok: boolean }>;
+      authClear: (payload: { pin: string }) => Promise<{ ok: boolean; error?: string }>;
+      accountSession: () => Promise<{ user: AccountUser | null }>;
+      accountRegister: (payload: {
+        email: string;
+        password: string;
+        displayName?: string;
+        migrateLegacy?: boolean;
+      }) => Promise<{ ok: boolean; user?: AccountUser; error?: string; warn?: string }>;
+      accountLogin: (payload: { email: string; password: string }) => Promise<{ ok: boolean; user?: AccountUser; error?: string }>;
+      accountLogout: () => Promise<{ ok: boolean }>;
+      accountHasLegacyData: () => Promise<{ has: boolean }>;
+    };
+  }
+}

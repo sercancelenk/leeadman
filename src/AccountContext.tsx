@@ -1,0 +1,212 @@
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from 'react';
+import { pbkdf2HashPassword, pbkdf2VerifyPassword } from './lib/passwordPbkdf2';
+
+export type AccountUser = { id: string; email: string; displayName?: string };
+
+type Ctx = {
+  user: AccountUser | null;
+  loading: boolean;
+  refresh: () => Promise<void>;
+  login: (email: string, password: string) => Promise<{ ok: boolean; error?: string }>;
+  register: (opts: {
+    email: string;
+    password: string;
+    displayName: string;
+    migrateLegacy?: boolean;
+  }) => Promise<{ ok: boolean; error?: string; warn?: string }>;
+  logout: () => Promise<void>;
+  hasElectronAccounts: boolean;
+  hasLegacyData: boolean;
+  refreshLegacyHint: () => Promise<void>;
+};
+
+const AccountCtx = createContext<Ctx | null>(null);
+
+const DEV_ACCOUNTS_KEY = 'leeadman-browser-accounts';
+const DEV_SESSION_KEY = 'leeadman-browser-session';
+
+type StoredUser = AccountUser & { saltB64: string; hashB64: string; createdAt: string };
+
+function useElectronAccount(): boolean {
+  return typeof window !== 'undefined' && !!window.leeadman?.accountSession;
+}
+
+async function readDevAccounts(): Promise<{ users: StoredUser[] }> {
+  try {
+    const raw = localStorage.getItem(DEV_ACCOUNTS_KEY);
+    if (!raw) return { users: [] };
+    const o = JSON.parse(raw) as { users?: StoredUser[] };
+    return { users: Array.isArray(o.users) ? o.users : [] };
+  } catch {
+    return { users: [] };
+  }
+}
+
+function writeDevAccounts(users: StoredUser[]) {
+  localStorage.setItem(DEV_ACCOUNTS_KEY, JSON.stringify({ users }));
+}
+
+function readDevSessionUserId(): string | null {
+  try {
+    const raw = localStorage.getItem(DEV_SESSION_KEY);
+    if (!raw) return null;
+    const o = JSON.parse(raw) as { userId?: string };
+    return typeof o.userId === 'string' && o.userId ? o.userId : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeDevSession(userId: string | null) {
+  if (!userId) localStorage.removeItem(DEV_SESSION_KEY);
+  else localStorage.setItem(DEV_SESSION_KEY, JSON.stringify({ userId }));
+}
+
+export function AccountProvider({ children }: { children: ReactNode }) {
+  const [user, setUser] = useState<AccountUser | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [hasLegacyData, setHasLegacyData] = useState(false);
+  const electron = useElectronAccount();
+
+  const refreshLegacyHint = useCallback(async () => {
+    if (window.leeadman?.accountHasLegacyData) {
+      const r = await window.leeadman.accountHasLegacyData();
+      setHasLegacyData(!!r?.has);
+    } else {
+      setHasLegacyData(false);
+    }
+  }, []);
+
+  const refresh = useCallback(async () => {
+    if (window.leeadman?.accountSession) {
+      const r = await window.leeadman.accountSession();
+      setUser(r?.user ?? null);
+      setLoading(false);
+      await refreshLegacyHint();
+      return;
+    }
+    const uid = readDevSessionUserId();
+    if (!uid) {
+      setUser(null);
+      setLoading(false);
+      return;
+    }
+    const { users } = await readDevAccounts();
+    const u = users.find((x) => x.id === uid);
+    if (!u) {
+      writeDevSession(null);
+      setUser(null);
+    } else {
+      setUser({ id: u.id, email: u.email, displayName: u.displayName });
+    }
+    setLoading(false);
+  }, [refreshLegacyHint]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const login = useCallback(
+    async (email: string, password: string) => {
+      const em = email.trim().toLowerCase();
+      if (window.leeadman?.accountLogin) {
+        const r = await window.leeadman.accountLogin({ email: em, password });
+        if (r?.ok && r.user) {
+          setUser(r.user);
+          return { ok: true as const };
+        }
+        return { ok: false as const, error: r?.error ?? 'Giriş başarısız.' };
+      }
+      const { users } = await readDevAccounts();
+      const u = users.find((x) => x.email === em);
+      if (!u) return { ok: false as const, error: 'E-posta veya parola hatalı.' };
+      const ok = await pbkdf2VerifyPassword(password, u.saltB64, u.hashB64);
+      if (!ok) return { ok: false as const, error: 'E-posta veya parola hatalı.' };
+      writeDevSession(u.id);
+      setUser({ id: u.id, email: u.email, displayName: u.displayName });
+      return { ok: true as const };
+    },
+    [],
+  );
+
+  const register = useCallback(
+    async (opts: { email: string; password: string; displayName: string; migrateLegacy?: boolean }) => {
+      const em = opts.email.trim().toLowerCase();
+      const displayName = opts.displayName.trim();
+      if (opts.password.length < 8) return { ok: false as const, error: 'Parola en az 8 karakter olmalı.' };
+      if (!em.includes('@')) return { ok: false as const, error: 'Geçerli bir e-posta gir.' };
+
+      if (window.leeadman?.accountRegister) {
+        const r = await window.leeadman.accountRegister({
+          email: em,
+          password: opts.password,
+          displayName,
+          migrateLegacy: opts.migrateLegacy,
+        });
+        if (r?.ok && r.user) {
+          setUser(r.user);
+          return { ok: true as const, warn: r.warn };
+        }
+        return { ok: false as const, error: r?.error ?? 'Kayıt başarısız.' };
+      }
+
+      const { users } = await readDevAccounts();
+      if (users.some((u) => u.email === em)) return { ok: false as const, error: 'Bu e-posta ile zaten kayıt var.' };
+      const { saltB64, hashB64 } = await pbkdf2HashPassword(opts.password);
+      const id = crypto.randomUUID();
+      const row: StoredUser = {
+        id,
+        email: em,
+        displayName: displayName || undefined,
+        saltB64,
+        hashB64,
+        createdAt: new Date().toISOString(),
+      };
+      writeDevAccounts([...users, row]);
+      writeDevSession(id);
+      setUser({ id, email: em, displayName: displayName || undefined });
+      return { ok: true as const };
+    },
+    [],
+  );
+
+  const logout = useCallback(async () => {
+    if (window.leeadman?.accountLogout) {
+      await window.leeadman.accountLogout();
+    } else {
+      writeDevSession(null);
+    }
+    setUser(null);
+  }, []);
+
+  const v = useMemo(
+    () => ({
+      user,
+      loading,
+      refresh,
+      login,
+      register,
+      logout,
+      hasElectronAccounts: electron,
+      hasLegacyData,
+      refreshLegacyHint,
+    }),
+    [user, loading, refresh, login, register, logout, electron, hasLegacyData, refreshLegacyHint],
+  );
+
+  return <AccountCtx.Provider value={v}>{children}</AccountCtx.Provider>;
+}
+
+export function useAccount(): Ctx {
+  const x = useContext(AccountCtx);
+  if (!x) throw new Error('useAccount outside AccountProvider');
+  return x;
+}

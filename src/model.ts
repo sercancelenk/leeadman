@@ -1,0 +1,497 @@
+import { v4 as uuid } from 'uuid';
+
+/** Eski tek-ekip verisindeki sabit kendi kaydı (migration) */
+export const LEGACY_SELF_PERSON_ID = '__self';
+
+export type ItemKind = 'task' | 'note' | 'goal' | 'document';
+
+export type GoalStatus = 'planned' | 'active' | 'completed' | 'cancelled';
+
+export const GOAL_STATUS_OPTIONS: { value: GoalStatus; label: string }[] = [
+  { value: 'planned', label: 'Planlandı' },
+  { value: 'active', label: 'Devam ediyor' },
+  { value: 'completed', label: 'Tamamlandı' },
+  { value: 'cancelled', label: 'İptal' },
+];
+
+export type TeamStatus = 'active' | 'paused' | 'archived';
+
+export interface Team {
+  id: string;
+  name: string;
+  createdAt: string;
+  /** Ekip çalışma durumu (UI + filtre) */
+  status?: TeamStatus;
+}
+
+export interface UserProfile {
+  displayName: string;
+  /** Favori ekip id sırası (önce gelen önce) */
+  favoriteTeamIds: string[];
+  jobTitle?: string;
+  department?: string;
+  phone?: string;
+  /** Kısa tanıtım / not */
+  bio?: string;
+}
+
+export interface Person {
+  id: string;
+  teamId: string;
+  name: string;
+  title?: string;
+  isSelf?: boolean;
+  /** Serbest not / 1:1 taslak alanı (kişi başına) */
+  scratchpad?: string;
+  createdAt: string;
+}
+
+export interface Item {
+  id: string;
+  personId: string;
+  kind: ItemKind;
+  title: string;
+  body: string;
+  /** İsteğe bağlı: Serüven, Operasyon, vb. */
+  category?: string;
+  /** Hedef / görev bitişi (deadline) */
+  dueAt?: string;
+  /** Hedef başlangıcı */
+  startAt?: string;
+  /** Yalnızca kind === 'goal' için iş durumu */
+  goalStatus?: GoalStatus;
+  remindAt?: string;
+  done: boolean;
+  doneAt?: string;
+  url?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TodoGroup {
+  id: string;
+  name: string;
+  sortOrder: number;
+  createdAt: string;
+}
+
+export interface TodoItem {
+  id: string;
+  groupId: string;
+  title: string;
+  done: boolean;
+  dueAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const DATA_VERSION = 3 as const;
+
+export interface AppData {
+  version: typeof DATA_VERSION;
+  teams: Team[];
+  people: Person[];
+  items: Item[];
+  notifiedReminderIds: string[];
+  /** Son seçilen ekip (UI tercihi) */
+  lastTeamId?: string;
+  /** Uygulama kullanıcı profili (lokal) */
+  profile?: UserProfile;
+  /** Kişisel yapılacaklar (ekipten bağımsız) */
+  todoGroups: TodoGroup[];
+  todoItems: TodoItem[];
+}
+
+export function nowIso(): string {
+  return new Date().toISOString();
+}
+
+export function selfPersonIdForTeam(teamId: string): string {
+  return `__self__${teamId}`;
+}
+
+export function leaderPersonIdForTeam(teamId: string): string {
+  return `__leader__${teamId}`;
+}
+
+export function isSelfPerson(p: Pick<Person, 'isSelf' | 'id'>): boolean {
+  if (p.isSelf) return true;
+  return p.id.startsWith('__self__');
+}
+
+export function isLeaderPerson(p: Pick<Person, 'id'>): boolean {
+  return p.id.startsWith('__leader__');
+}
+
+export function getSelfPerson(data: Pick<AppData, 'people'>, teamId: string): Person | undefined {
+  return data.people.find((p) => p.teamId === teamId && isSelfPerson(p));
+}
+
+export function getLeaderPerson(data: Pick<AppData, 'people'>, teamId: string): Person | undefined {
+  return data.people.find((p) => p.teamId === teamId && isLeaderPerson(p));
+}
+
+/** Ekip üyeleri: Kendim ve Liderim hariç */
+export function teamPeople(data: Pick<AppData, 'people'>, teamId: string): Person[] {
+  return data.people.filter((p) => p.teamId === teamId && !isSelfPerson(p) && !isLeaderPerson(p));
+}
+
+export function emptyData(): AppData {
+  const t = nowIso();
+  const teamId = uuid();
+  const selfId = selfPersonIdForTeam(teamId);
+  const leaderId = leaderPersonIdForTeam(teamId);
+  return {
+    version: DATA_VERSION,
+    teams: [{ id: teamId, name: 'İlk ekip', createdAt: t, status: 'active' }],
+    people: [
+      {
+        id: selfId,
+        teamId,
+        name: 'Kendim',
+        isSelf: true,
+        scratchpad: '',
+        createdAt: t,
+      },
+      {
+        id: leaderId,
+        teamId,
+        name: 'Liderim',
+        scratchpad: '',
+        createdAt: t,
+      },
+    ],
+    items: [],
+    notifiedReminderIds: [],
+    lastTeamId: teamId,
+    profile: { displayName: 'Ben', favoriteTeamIds: [] },
+    ...defaultTodoBundle(),
+  };
+}
+
+function defaultTodoBundle(): { todoGroups: TodoGroup[]; todoItems: TodoItem[] } {
+  const id = uuid();
+  const t = nowIso();
+  return {
+    todoGroups: [{ id, name: 'Genel', sortOrder: 0, createdAt: t }],
+    todoItems: [],
+  };
+}
+
+function parsePeople(raw: unknown[]): Person[] {
+  return raw
+    .filter((p): p is Record<string, unknown> => !!p && typeof p === 'object')
+    .map((p) => ({
+      id: typeof p.id === 'string' ? p.id : uuid(),
+      teamId: typeof p.teamId === 'string' ? p.teamId : '',
+      name: typeof p.name === 'string' && p.name.trim() ? p.name : 'İsimsiz',
+      title: typeof p.title === 'string' ? p.title : undefined,
+      isSelf: !!p.isSelf || (typeof p.id === 'string' && p.id.startsWith('__self__')),
+      scratchpad: typeof p.scratchpad === 'string' ? p.scratchpad : '',
+      createdAt: typeof p.createdAt === 'string' ? p.createdAt : nowIso(),
+    }));
+}
+
+function parseTeams(raw: unknown[]): Team[] {
+  const statuses: TeamStatus[] = ['active', 'paused', 'archived'];
+  return raw
+    .filter((t): t is Record<string, unknown> => !!t && typeof t === 'object')
+    .map((t) => {
+      const st = t.status;
+      const status = statuses.includes(st as TeamStatus) ? (st as TeamStatus) : 'active';
+      return {
+        id: typeof t.id === 'string' ? t.id : uuid(),
+        name: typeof t.name === 'string' && t.name.trim() ? t.name : 'Ekip',
+        createdAt: typeof t.createdAt === 'string' ? t.createdAt : nowIso(),
+        status,
+      };
+    });
+}
+
+function parseItems(raw: unknown[]): Item[] {
+  const goals: GoalStatus[] = ['planned', 'active', 'completed', 'cancelled'];
+  return raw
+    .filter((it): it is Record<string, unknown> => !!it && typeof it === 'object')
+    .map((it) => {
+      const kind: ItemKind = (['task', 'note', 'goal', 'document'] as const).includes(it.kind as ItemKind)
+        ? (it.kind as ItemKind)
+        : 'note';
+      const goalStatusRaw = it.goalStatus;
+      const goalStatus =
+        kind === 'goal' && typeof goalStatusRaw === 'string' && goals.includes(goalStatusRaw as GoalStatus)
+          ? (goalStatusRaw as GoalStatus)
+          : undefined;
+      return {
+        id: typeof it.id === 'string' ? it.id : uuid(),
+        personId: typeof it.personId === 'string' ? it.personId : '',
+        kind,
+        title: typeof it.title === 'string' ? it.title : '',
+        body: typeof it.body === 'string' ? it.body : '',
+        dueAt: typeof it.dueAt === 'string' ? it.dueAt : undefined,
+        startAt: typeof it.startAt === 'string' ? it.startAt : undefined,
+        goalStatus,
+        remindAt: typeof it.remindAt === 'string' ? it.remindAt : undefined,
+        done: !!it.done,
+        doneAt: typeof it.doneAt === 'string' ? it.doneAt : undefined,
+        url: typeof it.url === 'string' ? it.url : undefined,
+        category: typeof it.category === 'string' && it.category.trim() ? it.category.trim() : undefined,
+        createdAt: typeof it.createdAt === 'string' ? it.createdAt : nowIso(),
+        updatedAt: typeof it.updatedAt === 'string' ? it.updatedAt : nowIso(),
+      };
+    });
+}
+
+function parseTodoGroups(raw: unknown[]): TodoGroup[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((g): g is Record<string, unknown> => !!g && typeof g === 'object')
+    .map((g, i) => ({
+      id: typeof g.id === 'string' ? g.id : uuid(),
+      name: typeof g.name === 'string' && g.name.trim() ? g.name.trim() : 'Grup',
+      sortOrder: typeof g.sortOrder === 'number' ? g.sortOrder : i,
+      createdAt: typeof g.createdAt === 'string' ? g.createdAt : nowIso(),
+    }));
+}
+
+function parseTodoItems(raw: unknown[]): TodoItem[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((x): x is Record<string, unknown> => !!x && typeof x === 'object')
+    .map((x) => ({
+      id: typeof x.id === 'string' ? x.id : uuid(),
+      groupId: typeof x.groupId === 'string' ? x.groupId : '',
+      title: typeof x.title === 'string' ? x.title : '',
+      done: !!x.done,
+      dueAt: typeof x.dueAt === 'string' ? x.dueAt : undefined,
+      createdAt: typeof x.createdAt === 'string' ? x.createdAt : nowIso(),
+      updatedAt: typeof x.updatedAt === 'string' ? x.updatedAt : nowIso(),
+    }));
+}
+
+/** v1 -> v2: tek implicit ekip, her kişiye teamId, __self -> __self__{team} */
+function migrateV1ToV2(o: Record<string, unknown>): AppData {
+  const t = nowIso();
+  const teamId = uuid();
+  const newSelfId = selfPersonIdForTeam(teamId);
+  const rawPeople = Array.isArray(o.people) ? o.people : [];
+  const people: Person[] = rawPeople
+    .filter((p): p is Record<string, unknown> => !!p && typeof p === 'object')
+    .map((p) => {
+      const oldId = typeof p.id === 'string' ? p.id : uuid();
+      const id = oldId === LEGACY_SELF_PERSON_ID ? newSelfId : oldId;
+      const isSelf = oldId === LEGACY_SELF_PERSON_ID;
+      return {
+        id,
+        teamId,
+        name: typeof p.name === 'string' && p.name.trim() ? p.name : 'İsimsiz',
+        title: typeof p.title === 'string' ? p.title : undefined,
+        isSelf,
+        scratchpad: '',
+        createdAt: typeof p.createdAt === 'string' ? p.createdAt : t,
+      };
+    });
+
+  if (!people.some((p) => p.id === newSelfId)) {
+    people.unshift({
+      id: newSelfId,
+      teamId,
+      name: 'Kendim',
+      isSelf: true,
+      scratchpad: '',
+      createdAt: t,
+    });
+  }
+
+  const rawItems = Array.isArray(o.items) ? o.items : [];
+  const items = parseItems(rawItems).map((it) => ({
+    ...it,
+    personId: it.personId === LEGACY_SELF_PERSON_ID ? newSelfId : it.personId,
+  }));
+
+  const notified = Array.isArray(o.notifiedReminderIds) ? o.notifiedReminderIds : [];
+
+  return ensureProfile(
+    ensureTeamsHaveLeader(
+      ensureTeamsHaveSelf({
+        version: DATA_VERSION,
+        teams: [{ id: teamId, name: 'Varsayılan ekip', createdAt: t, status: 'active' }],
+        people,
+        items,
+        notifiedReminderIds: [...notified].filter((x): x is string => typeof x === 'string'),
+        lastTeamId: teamId,
+        ...defaultTodoBundle(),
+      }),
+    ),
+  );
+}
+
+function ensureTeamsHaveSelf(data: AppData): AppData {
+  const t = nowIso();
+  let { teams, people } = data;
+  const additions: Person[] = [];
+
+  for (const team of teams) {
+    const hasSelf = people.some((p) => p.teamId === team.id && isSelfPerson(p));
+    if (!hasSelf) {
+      additions.push({
+        id: selfPersonIdForTeam(team.id),
+        teamId: team.id,
+        name: 'Kendim',
+        isSelf: true,
+        scratchpad: '',
+        createdAt: t,
+      });
+    }
+  }
+
+  if (additions.length) {
+    people = [...people, ...additions];
+  }
+
+  /** teamId eksik kişileri ilk ekibe bağla (veya ekip oluştur) */
+  const missingTeam = people.filter((p) => !p.teamId || !teams.some((x) => x.id === p.teamId));
+  if (missingTeam.length) {
+    let fallbackTeamId = teams[0]?.id;
+    if (!fallbackTeamId) {
+      fallbackTeamId = uuid();
+      teams = [...teams, { id: fallbackTeamId, name: 'Ekip', createdAt: t, status: 'active' as TeamStatus }];
+    }
+    people = people.map((p) =>
+      !p.teamId || !teams.some((x) => x.id === p.teamId) ? { ...p, teamId: fallbackTeamId! } : p,
+    );
+  }
+
+  return { ...data, teams, people };
+}
+
+function ensureTeamsHaveLeader(data: AppData): AppData {
+  const t = nowIso();
+  let { teams, people } = data;
+  const additions: Person[] = [];
+
+  for (const team of teams) {
+    const lid = leaderPersonIdForTeam(team.id);
+    if (!people.some((p) => p.id === lid)) {
+      additions.push({
+        id: lid,
+        teamId: team.id,
+        name: 'Liderim',
+        scratchpad: '',
+        createdAt: t,
+      });
+    }
+  }
+
+  if (additions.length) {
+    people = [...people, ...additions];
+  }
+
+  return { ...data, teams, people };
+}
+
+function normalizeGoalItem(it: Item): Item {
+  if (it.kind !== 'goal') {
+    const { goalStatus: _g, startAt: _s, ...rest } = it;
+    void _g;
+    void _s;
+    return rest as Item;
+  }
+  const allowed: GoalStatus[] = ['planned', 'active', 'completed', 'cancelled'];
+  const goalStatus: GoalStatus =
+    it.goalStatus && allowed.includes(it.goalStatus) ? it.goalStatus : it.done ? 'completed' : 'planned';
+  const done = goalStatus === 'completed';
+  return {
+    ...it,
+    goalStatus,
+    done,
+    startAt: typeof it.startAt === 'string' ? it.startAt : undefined,
+  };
+}
+
+function ensureTodoDomain(data: AppData): AppData {
+  let todoGroups = [...(data.todoGroups ?? [])].sort((a, b) => a.sortOrder - b.sortOrder);
+  let todoItems = [...(data.todoItems ?? [])];
+  if (todoGroups.length === 0) {
+    const id = uuid();
+    todoGroups = [{ id, name: 'Genel', sortOrder: 0, createdAt: nowIso() }];
+  }
+  const firstId = todoGroups[0]!.id;
+  todoItems = todoItems.map((x) => ({
+    ...x,
+    groupId: todoGroups.some((g) => g.id === x.groupId) ? x.groupId : firstId,
+  }));
+  return { ...data, todoGroups, todoItems };
+}
+
+function patchDataToV3(data: AppData): AppData {
+  let d: AppData = { ...data, version: DATA_VERSION };
+  d = ensureTodoDomain(d);
+  d = { ...d, items: d.items.map(normalizeGoalItem) };
+  return d;
+}
+
+export function normalizeData(raw: unknown): AppData {
+  const base = emptyData();
+  if (!raw || typeof raw !== 'object') return base;
+
+  const o = raw as Record<string, unknown>;
+  const ver = typeof o.version === 'number' ? o.version : 1;
+
+  if (ver < 2) {
+    return patchDataToV3(migrateV1ToV2(o));
+  }
+
+  let teams = parseTeams(Array.isArray(o.teams) ? o.teams : []);
+  let people = parsePeople(Array.isArray(o.people) ? o.people : []);
+  const items = parseItems(Array.isArray(o.items) ? o.items : []);
+  const notified = [...(Array.isArray(o.notifiedReminderIds) ? o.notifiedReminderIds : [])].filter(
+    (x): x is string => typeof x === 'string',
+  );
+  const lastTeamId = typeof o.lastTeamId === 'string' ? o.lastTeamId : undefined;
+  const todoGroups = parseTodoGroups(Array.isArray(o.todoGroups) ? o.todoGroups : []);
+  const todoItems = parseTodoItems(Array.isArray(o.todoItems) ? o.todoItems : []);
+
+  if (teams.length === 0) {
+    const tid = uuid();
+    teams = [{ id: tid, name: 'İlk ekip', createdAt: nowIso(), status: 'active' }];
+    people = people.map((p) => ({ ...p, teamId: p.teamId || tid }));
+  }
+
+  let data: AppData = {
+    version: DATA_VERSION,
+    teams,
+    people,
+    items,
+    notifiedReminderIds: notified,
+    lastTeamId: lastTeamId && teams.some((x) => x.id === lastTeamId) ? lastTeamId : teams[0]?.id,
+    todoGroups,
+    todoItems,
+  };
+
+  data = ensureTeamsHaveSelf(data);
+  data = ensureTeamsHaveLeader(data);
+  data = ensureProfile(data);
+
+  return patchDataToV3(data);
+}
+
+function ensureProfile(data: AppData): AppData {
+  const raw = data.profile ?? {
+    displayName: 'Ben',
+    favoriteTeamIds: [],
+  };
+  const fav = (raw.favoriteTeamIds ?? []).filter((id) => data.teams.some((t) => t.id === id));
+  const teams = data.teams.map((t) => ({
+    ...t,
+    status: t.status && ['active', 'paused', 'archived'].includes(t.status) ? t.status : 'active',
+  }));
+  const profile: UserProfile = {
+    displayName: raw.displayName?.trim() ? raw.displayName.trim() : 'Ben',
+    favoriteTeamIds: fav,
+    jobTitle: raw.jobTitle?.trim() || undefined,
+    department: raw.department?.trim() || undefined,
+    phone: raw.phone?.trim() || undefined,
+    bio: raw.bio?.trim() || undefined,
+  };
+  return { ...data, profile, teams };
+}

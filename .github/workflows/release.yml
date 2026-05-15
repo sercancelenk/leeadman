@@ -1,0 +1,36 @@
+# main dalına her push veya Actions’tan manuel çalıştırma: sürüm = 0.2.<run_number>, macOS paketi + GitHub Release
+# İlk kullanımdan önce repository'de Actions izinlerinin "Read and write" olduğundan emin ol.
+
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Publish hedefini repo sahibiyle eşle
+        run: node scripts/patch-publish.mjs "${{ github.repository_owner }}"
+
+      - name: Otomatik sürüm numarası
+        run: npm pkg set version=0.2.${{ github.run_number }}
+
+      - run: npm ci
+
+      - name: Derle ve GitHub'a yükle
+        run: npm run build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
