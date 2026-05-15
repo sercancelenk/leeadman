@@ -1,4 +1,4 @@
-import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { BrowserRouter, HashRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { AccountProvider, useAccount } from './AccountContext';
 import { AuthGate, AuthProvider } from './AuthContext';
 import { AppDataProvider, useAppData, useReminderWatcher } from './AppDataContext';
@@ -16,6 +16,10 @@ import { Settings } from './views/Settings';
 import { TeamDashboard } from './views/TeamDashboard';
 import { TodosPage } from './views/TodosPage';
 import './app.css';
+
+/** Electron .app / loadFile() → `file:`; BrowserRouter burada boş ekran yapar, HashRouter gerekir. */
+const HistoryRouter =
+  typeof window !== 'undefined' && window.location.protocol === 'file:' ? HashRouter : BrowserRouter;
 
 function BootLoading({ label }: { label: string }) {
   return (
@@ -43,7 +47,7 @@ function ProtectedShell() {
 
 export default function App() {
   return (
-    <BrowserRouter>
+    <HistoryRouter>
       <ThemeProvider>
         <AccountProvider>
           <Routes>
@@ -53,7 +57,7 @@ export default function App() {
           </Routes>
         </AccountProvider>
       </ThemeProvider>
-    </BrowserRouter>
+    </HistoryRouter>
   );
 }
 
