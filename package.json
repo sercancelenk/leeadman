@@ -49,7 +49,8 @@
       {
         "provider": "github",
         "owner": "YOUR_GITHUB_USERNAME",
-        "repo": "leeadman"
+        "repo": "leeadman",
+        "draft": false
       }
     ],
     "mac": {

@@ -125,6 +125,8 @@ Kontrol için `.github/workflows/ci.yml` ile PR/push’ta `tsc` + `vite build` k
 
 **Sık neden:** `electron-builder` varsayılan olarak GitHub’a yüklemeyi çoğunlukla yalnızca **git etiketi** varken yapar; CI’da etiket olmayınca derleme **başarılı** görünür fakat **Release oluşmaz**.
 
+**Taslak (Draft) görünüyorsa:** GitHub’da sürüme gir → **Publish release** ile yayınla; taslaklar listede farklı görünür ve `electron-updater` yalnızca **yayımlanmış** sürümleri tipik olarak görür. Bundan sonraki CI sürümleri için `package.json` içinde `build.publish[0].draft: false` tanımlıdır.
+
 **Çözüm:** Bu repoda CI artık `npm run build:release` kullanır; bu komut `electron-builder --publish always` ile her koşuda GitHub Release + varlıkları yükler. Güncel `main`’i push edip Release workflow’unu yeniden çalıştır.
 
 Ayrıca kontrol et: **Settings → Actions → General → Workflow permissions** = **Read and write**.
