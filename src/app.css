@@ -3349,6 +3349,143 @@ code {
   mix-blend-mode: lighten;
 }
 
+/* —— Mobile drawer sidebar (≤700px) ——
+   On phones the sidebar is a slide-in overlay and the main content always
+   uses the full viewport. On desktop we keep the inline layout. */
+@media (max-width: 700px) {
+  .app-shell--mobile .app-sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 60;
+    width: min(280px, 84vw);
+    transform: translateX(-110%);
+    transition: transform 0.22s ease;
+    box-shadow: 4px 0 20px rgba(0, 0, 0, 0.35);
+    padding-top: max(env(safe-area-inset-top), 12px);
+    padding-bottom: max(env(safe-area-inset-bottom), 12px);
+  }
+
+  .app-shell--mobile.app-shell--drawer-open .app-sidebar {
+    transform: translateX(0);
+  }
+
+  .app-shell--mobile .app-sidebar__brand {
+    padding-top: 8px;
+  }
+
+  .app-shell--mobile .app-sidebar__link {
+    min-height: 44px;
+    font-size: 15px;
+  }
+
+  .app-shell__backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 55;
+    background: rgba(0, 0, 0, 0.45);
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    animation: app-backdrop-in 0.18s ease;
+  }
+
+  @keyframes app-backdrop-in {
+    from { background: rgba(0, 0, 0, 0); }
+    to   { background: rgba(0, 0, 0, 0.45); }
+  }
+
+  .app-shell--mobile .main--scroll {
+    /* iOS smooth scrolling and safe-area awareness */
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  /* Avoid iOS auto-zoom on focus by ensuring inputs render at ≥16px. */
+  .input,
+  .select,
+  .textarea,
+  .todos-row__title-input,
+  .todos-section__title,
+  .todos-row__date {
+    font-size: 16px !important;
+  }
+
+  /* Topbar layout cleanup for narrow phones. */
+  .topbar {
+    height: auto;
+    padding: 8px 12px;
+    gap: 6px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .topbar__crumb {
+    font-size: 14px;
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .topbar__center {
+    order: 3;
+    width: 100%;
+    flex: 1 1 100%;
+    justify-content: flex-start;
+    gap: 6px;
+  }
+
+  .team-switcher {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .team-switcher__name {
+    font-size: 13px;
+  }
+
+  .topbar__status {
+    flex-shrink: 0;
+  }
+
+  /* Profile redesign card: stack avatar above text on phones */
+  .profile-card__top {
+    align-items: center;
+    text-align: center;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .profile-card__head {
+    align-items: center;
+  }
+
+  .profile-card__grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* Analytics segmented control becomes scrollable */
+  .analytics-cards {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .analytics-table {
+    font-size: 12px;
+  }
+
+  .analytics-table td,
+  .analytics-table th {
+    padding: 6px 8px;
+  }
+
+  .progress {
+    width: 80px;
+  }
+}
+
 /* —— Sync (LAN host + pair-with-host UI) —— */
 .sync-host,
 .sync-client {
