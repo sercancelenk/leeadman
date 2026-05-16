@@ -1,5 +1,17 @@
 import { v4 as uuid } from 'uuid';
-import type { AppData, GoalStatus, Item, ItemKind, Person, Team, TodoGroup, TodoItem, UserProfile } from './model';
+import type {
+  AppData,
+  FeedbackKind,
+  GoalStatus,
+  Item,
+  ItemKind,
+  Person,
+  ReminderRepeat,
+  Team,
+  TodoGroup,
+  TodoItem,
+  UserProfile,
+} from './model';
 import { isLeaderPerson, isSelfPerson, nowIso, selfPersonIdForTeam, leaderPersonIdForTeam } from './model';
 
 export function addTeam(data: AppData, name: string): AppData {
@@ -92,7 +104,7 @@ export function addPerson(data: AppData, teamId: string, name: string, title?: s
 export function updatePerson(
   data: AppData,
   id: string,
-  patch: Partial<Pick<Person, 'name' | 'title' | 'scratchpad'>>,
+  patch: Partial<Pick<Person, 'name' | 'title' | 'scratchpad' | 'agenda'>>,
 ): AppData {
   return {
     ...data,
@@ -104,6 +116,7 @@ export function updatePerson(
           name: patch.name?.trim() ? patch.name.trim() : p.name,
           title: patch.title !== undefined ? patch.title.trim() || undefined : p.title,
           scratchpad: patch.scratchpad !== undefined ? patch.scratchpad : p.scratchpad,
+          agenda: patch.agenda !== undefined ? patch.agenda : p.agenda,
         };
       }
       return {
@@ -111,6 +124,7 @@ export function updatePerson(
         name: patch.name !== undefined ? patch.name.trim() || p.name : p.name,
         title: patch.title !== undefined ? patch.title.trim() || undefined : p.title,
         scratchpad: patch.scratchpad !== undefined ? patch.scratchpad : p.scratchpad,
+        agenda: patch.agenda !== undefined ? patch.agenda : p.agenda,
       };
     }),
   };
@@ -139,7 +153,21 @@ export function addItem(
   data: AppData,
   personId: string,
   kind: ItemKind,
-  fields: Partial<Pick<Item, 'title' | 'body' | 'dueAt' | 'startAt' | 'remindAt' | 'url' | 'category' | 'goalStatus'>>,
+  fields: Partial<
+    Pick<
+      Item,
+      | 'title'
+      | 'body'
+      | 'dueAt'
+      | 'startAt'
+      | 'remindAt'
+      | 'remindRepeat'
+      | 'url'
+      | 'category'
+      | 'goalStatus'
+      | 'feedbackKind'
+    >
+  >,
 ): AppData {
   if (!data.people.some((p) => p.id === personId)) return data;
   const t = nowIso();
@@ -149,6 +177,18 @@ export function addItem(
       ? fields.goalStatus && allowedGoal.includes(fields.goalStatus)
         ? fields.goalStatus
         : 'planned'
+      : undefined;
+  const allowedFeedback: FeedbackKind[] = ['praise', 'coaching', 'concern'];
+  const feedbackKind: FeedbackKind | undefined =
+    kind === 'feedback'
+      ? fields.feedbackKind && allowedFeedback.includes(fields.feedbackKind)
+        ? fields.feedbackKind
+        : 'coaching'
+      : undefined;
+  const allowedRepeat: ReminderRepeat[] = ['daily', 'weekly', 'monthly'];
+  const remindRepeat: ReminderRepeat | undefined =
+    fields.remindAt && fields.remindRepeat && allowedRepeat.includes(fields.remindRepeat)
+      ? fields.remindRepeat
       : undefined;
   const item: Item = {
     id: uuid(),
@@ -160,7 +200,9 @@ export function addItem(
     dueAt: fields.dueAt || undefined,
     startAt: kind === 'goal' && fields.startAt ? fields.startAt : undefined,
     goalStatus,
+    feedbackKind,
     remindAt: fields.remindAt || undefined,
+    remindRepeat,
     url: kind === 'document' ? fields.url?.trim() || undefined : undefined,
     done: kind === 'goal' ? goalStatus === 'completed' : false,
     createdAt: t,
@@ -183,6 +225,8 @@ function defaultTitle(kind: ItemKind): string {
       return 'New goal';
     case 'document':
       return 'New document';
+    case 'feedback':
+      return 'New feedback';
     default:
       return 'New item';
   }
@@ -191,7 +235,22 @@ function defaultTitle(kind: ItemKind): string {
 export function updateItem(
   data: AppData,
   id: string,
-  patch: Partial<Pick<Item, 'title' | 'body' | 'dueAt' | 'startAt' | 'remindAt' | 'url' | 'done' | 'category' | 'goalStatus'>>,
+  patch: Partial<
+    Pick<
+      Item,
+      | 'title'
+      | 'body'
+      | 'dueAt'
+      | 'startAt'
+      | 'remindAt'
+      | 'remindRepeat'
+      | 'url'
+      | 'done'
+      | 'category'
+      | 'goalStatus'
+      | 'feedbackKind'
+    >
+  >,
 ): AppData {
   let clearedNotify = false;
   const items = data.items.map((it) => {
@@ -204,8 +263,16 @@ export function updateItem(
     const startAt =
       it.kind === 'goal' ? (patch.startAt !== undefined ? patch.startAt || undefined : it.startAt) : undefined;
     const remindAt = patch.remindAt !== undefined ? patch.remindAt || undefined : it.remindAt;
+    const remindRepeat =
+      patch.remindRepeat !== undefined ? patch.remindRepeat || undefined : it.remindRepeat;
     const url = patch.url !== undefined ? patch.url || undefined : it.url;
     const category = patch.category !== undefined ? patch.category?.trim() || undefined : it.category;
+    const feedbackKind =
+      it.kind === 'feedback'
+        ? patch.feedbackKind !== undefined
+          ? patch.feedbackKind
+          : it.feedbackKind ?? 'coaching'
+        : undefined;
 
     let done = it.done;
     let doneAt = it.doneAt;
@@ -236,9 +303,11 @@ export function updateItem(
       dueAt,
       startAt,
       remindAt,
+      remindRepeat: remindAt ? remindRepeat : undefined,
       url,
       category,
       goalStatus: it.kind === 'goal' ? goalStatus : undefined,
+      feedbackKind,
       done,
       doneAt,
       updatedAt: nowIso(),
@@ -311,7 +380,11 @@ export function addTodoGroup(data: AppData, name: string): AppData {
   return { ...data, todoGroups: [...data.todoGroups, g] };
 }
 
-export function updateTodoGroup(data: AppData, groupId: string, patch: Partial<Pick<TodoGroup, 'name' | 'sortOrder'>>): AppData {
+export function updateTodoGroup(
+  data: AppData,
+  groupId: string,
+  patch: Partial<Pick<TodoGroup, 'name' | 'sortOrder' | 'pinned' | 'archived'>>,
+): AppData {
   return {
     ...data,
     todoGroups: data.todoGroups.map((g) =>
@@ -320,6 +393,8 @@ export function updateTodoGroup(data: AppData, groupId: string, patch: Partial<P
             ...g,
             name: patch.name !== undefined ? patch.name.trim() || g.name : g.name,
             sortOrder: patch.sortOrder !== undefined ? patch.sortOrder : g.sortOrder,
+            pinned: patch.pinned !== undefined ? (patch.pinned ? true : undefined) : g.pinned,
+            archived: patch.archived !== undefined ? (patch.archived ? true : undefined) : g.archived,
           }
         : g,
     ),
@@ -334,6 +409,52 @@ export function removeTodoGroup(data: AppData, groupId: string): AppData {
   if (todoGroups.length === 0) return data;
   const todoItems = data.todoItems.map((x) => (x.groupId === groupId ? { ...x, groupId: fallback } : x));
   return { ...data, todoGroups, todoItems };
+}
+
+/**
+ * Move a todo group one position up or down within its visibility group
+ * (pinned-vs-not). Pinned groups only reorder against other pinned, and
+ * vice versa, to keep the "pinned-on-top" invariant intact.
+ */
+export function moveTodoGroup(data: AppData, groupId: string, direction: 'up' | 'down'): AppData {
+  const target = data.todoGroups.find((g) => g.id === groupId);
+  if (!target) return data;
+  const peers = [...data.todoGroups]
+    .filter((g) => !!g.pinned === !!target.pinned && !!g.archived === !!target.archived)
+    .sort((a, b) => a.sortOrder - b.sortOrder);
+  const idx = peers.findIndex((g) => g.id === groupId);
+  if (idx < 0) return data;
+  const swapWith = direction === 'up' ? peers[idx - 1] : peers[idx + 1];
+  if (!swapWith) return data;
+  const a = target.sortOrder;
+  const b = swapWith.sortOrder;
+  return {
+    ...data,
+    todoGroups: data.todoGroups.map((g) => {
+      if (g.id === target.id) return { ...g, sortOrder: b };
+      if (g.id === swapWith.id) return { ...g, sortOrder: a };
+      return g;
+    }),
+  };
+}
+
+/** Removes every completed task from the given list. */
+export function clearCompletedInGroup(data: AppData, groupId: string): AppData {
+  return {
+    ...data,
+    todoItems: data.todoItems.filter((t) => !(t.groupId === groupId && t.done)),
+  };
+}
+
+/** Marks every open task in the list as done (preserves already-done items). */
+export function markAllCompleteInGroup(data: AppData, groupId: string): AppData {
+  const now = nowIso();
+  return {
+    ...data,
+    todoItems: data.todoItems.map((t) =>
+      t.groupId === groupId && !t.done ? { ...t, done: true, updatedAt: now } : t,
+    ),
+  };
 }
 
 export function addTodoItem(data: AppData, groupId: string, title: string): AppData {

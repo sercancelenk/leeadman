@@ -1,6 +1,16 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import type { CSSProperties } from 'react';
-import { IcCalendar, IcCheck, IcChevronDown, IcClock, IcLayoutGrid, IcListTodo, IcPlus, IcTrash } from '../components/icons';
+import {
+  IcCalendar,
+  IcCheck,
+  IcChevronDown,
+  IcClock,
+  IcLayoutGrid,
+  IcListTodo,
+  IcPlus,
+  IcStar,
+  IcTrash,
+} from '../components/icons';
 import { useAccount } from '../AccountContext';
 import { useAppData } from '../AppDataContext';
 import { formatDateShort, formatTimeOnly, fromLocalDatetimeValue, isPast, toLocalDatetimeValue } from '../lib/datetime';
@@ -21,13 +31,36 @@ function ringStyle(groupId: string): CSSProperties {
 }
 
 const LS_TODO_SECTIONS = 'leeadman.todos.sectionsOpen.v1';
+const LS_TODO_SHOW_ARCHIVED = 'leeadman.todos.showArchived.v1';
 
 function todoSectionsStorageKey(userId: string) {
   return `${LS_TODO_SECTIONS}:${userId}`;
 }
 
+function todoShowArchivedKey(userId: string) {
+  return `${LS_TODO_SHOW_ARCHIVED}:${userId}`;
+}
+
 function isSectionOpen(map: Record<string, boolean>, groupId: string): boolean {
   return map[groupId] !== false;
+}
+
+/**
+ * Sorts groups in the order they should be displayed:
+ *   1. Pinned (sortOrder asc)
+ *   2. Unpinned (sortOrder asc)
+ *   3. Archived (sortOrder asc) — only when included
+ */
+function sortGroups(groups: TodoGroup[]): TodoGroup[] {
+  return [...groups].sort((a, b) => {
+    const ap = !!a.pinned;
+    const bp = !!b.pinned;
+    const aa = !!a.archived;
+    const ba = !!b.archived;
+    if (aa !== ba) return aa ? 1 : -1;
+    if (ap !== bp) return ap ? -1 : 1;
+    return a.sortOrder - b.sortOrder;
+  });
 }
 
 type TodoTaskRowProps = {
@@ -165,8 +198,19 @@ function TodoTaskRow({ item, group, groups, compact, onPatch, onToggle, onRemove
 export function TodosPage() {
   const { user } = useAccount();
   const userId = user?.id ?? '';
-  const { data, addTodoGroup, removeTodoGroup, addTodoItem, updateTodoItem, toggleTodoItem, removeTodoItem, updateTodoGroup } =
-    useAppData();
+  const {
+    data,
+    addTodoGroup,
+    removeTodoGroup,
+    addTodoItem,
+    updateTodoItem,
+    toggleTodoItem,
+    removeTodoItem,
+    updateTodoGroup,
+    moveTodoGroup,
+    clearCompletedInGroup,
+    markAllCompleteInGroup,
+  } = useAppData();
   const [newGroupName, setNewGroupName] = useState('');
   const [newListOpen, setNewListOpen] = useState(false);
   const [draftByGroup, setDraftByGroup] = useState<Record<string, string>>({});
@@ -174,8 +218,15 @@ export function TodosPage() {
   const [compact, setCompact] = useState(false);
   const [sectionOpenMap, setSectionOpenMap] = useState<Record<string, boolean>>({});
   const [sectionsHydrated, setSectionsHydrated] = useState(false);
+  const [search, setSearch] = useState('');
+  const [showArchived, setShowArchived] = useState(false);
 
-  const groups = useMemo(() => [...data.todoGroups].sort((a, b) => a.sortOrder - b.sortOrder), [data.todoGroups]);
+  const allGroupsSorted = useMemo(() => sortGroups(data.todoGroups), [data.todoGroups]);
+
+  const visibleGroups = useMemo(
+    () => allGroupsSorted.filter((g) => showArchived || !g.archived),
+    [allGroupsSorted, showArchived],
+  );
 
   useEffect(() => {
     if (!userId) {
@@ -196,6 +247,8 @@ export function TodosPage() {
       } else {
         setSectionOpenMap({});
       }
+      const archivedRaw = localStorage.getItem(todoShowArchivedKey(userId));
+      setShowArchived(archivedRaw === '1');
     } catch {
       setSectionOpenMap({});
     }
@@ -210,6 +263,15 @@ export function TodosPage() {
       /* ignore */
     }
   }, [sectionOpenMap, sectionsHydrated, userId]);
+
+  useEffect(() => {
+    if (!sectionsHydrated || !userId) return;
+    try {
+      localStorage.setItem(todoShowArchivedKey(userId), showArchived ? '1' : '0');
+    } catch {
+      /* ignore */
+    }
+  }, [showArchived, sectionsHydrated, userId]);
 
   const itemsByGroup = useMemo(() => {
     const m = new Map<string, TodoItem[]>();
@@ -230,7 +292,10 @@ export function TodosPage() {
     return m;
   }, [data.todoGroups, data.todoItems]);
 
-  const groupById = useMemo(() => new Map(groups.map((g) => [g.id, g])), [groups]);
+  const groupById = useMemo(() => new Map(allGroupsSorted.map((g) => [g.id, g])), [allGroupsSorted]);
+
+  const q = search.trim().toLowerCase();
+  const matchesQuery = (it: TodoItem) => !q || it.title.toLowerCase().includes(q);
 
   return (
     <div className="page todos-route">
@@ -250,15 +315,48 @@ export function TodosPage() {
         </button>
       </header>
 
-      {groups.map((g) => {
+      <section className="card todos-toolbar">
+        <input
+          type="search"
+          className="input todos-toolbar__search"
+          placeholder="Search tasks…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+        <label className="todos-toolbar__check">
+          <input
+            type="checkbox"
+            checked={showArchived}
+            onChange={(e) => setShowArchived(e.target.checked)}
+          />
+          <span className="small">Show archived</span>
+        </label>
+      </section>
+
+      {visibleGroups.map((g, idx) => {
         const list = itemsByGroup.get(g.id) ?? [];
+        const matchedList = list.filter(matchesQuery);
         const draft = draftByGroup[g.id] ?? '';
-        const active = list.filter((x) => !x.done);
-        const done = list.filter((x) => x.done);
+        const active = matchedList.filter((x) => !x.done);
+        const done = matchedList.filter((x) => x.done);
+        const totalActive = list.filter((x) => !x.done).length;
+        const totalDone = list.filter((x) => x.done).length;
         const sectionOpen = isSectionOpen(sectionOpenMap, g.id);
 
+        if (q && matchedList.length === 0) return null;
+
+        const peers = allGroupsSorted.filter((p) => !!p.pinned === !!g.pinned && !!p.archived === !!g.archived);
+        const myIdx = peers.findIndex((p) => p.id === g.id);
+        const canMoveUp = myIdx > 0;
+        const canMoveDown = myIdx >= 0 && myIdx < peers.length - 1;
+
         return (
-          <section key={g.id} className="card todos-section">
+          <section
+            key={g.id}
+            className={`card todos-section${g.pinned ? ' todos-section--pinned' : ''}${
+              g.archived ? ' todos-section--archived' : ''
+            }`}
+          >
             <div className="todos-section__head">
               <button
                 type="button"
@@ -275,6 +373,18 @@ export function TodosPage() {
               >
                 <IcChevronDown size={18} className="todos-section__chev" strokeWidth={2.25} />
               </button>
+
+              <button
+                type="button"
+                className={`todos-section__pin${g.pinned ? ' todos-section__pin--on' : ''}`}
+                title={g.pinned ? 'Unpin list' : 'Pin to top'}
+                aria-label={g.pinned ? 'Unpin list' : 'Pin to top'}
+                aria-pressed={!!g.pinned}
+                onClick={() => updateTodoGroup(g.id, { pinned: !g.pinned })}
+              >
+                <IcStar size={16} />
+              </button>
+
               <input
                 className="todos-section__title"
                 defaultValue={g.name}
@@ -285,32 +395,99 @@ export function TodosPage() {
                   if (v && v !== g.name) updateTodoGroup(g.id, { name: v });
                 }}
               />
-              {data.todoGroups.length > 1 ? (
-                <details className="todos-section__menu">
-                  <summary className="todos-section__menu-btn" aria-label="List options">
-                    <span aria-hidden>⋯</span>
-                  </summary>
-                  <div className="todos-section__menu-panel">
-                    <button
-                      type="button"
-                      className="todos-section__menu-item todos-section__menu-item--danger"
-                      onClick={() => {
-                        if (window.confirm(`Delete the “${g.name}” list? Its tasks will be moved to another list.`)) {
-                          removeTodoGroup(g.id);
-                        }
-                      }}
-                    >
-                      Delete list
-                    </button>
-                  </div>
-                </details>
-              ) : null}
+
+              <span className="todos-section__counts" title="Open · Completed">
+                {totalActive}
+                <span className="muted"> / {totalActive + totalDone}</span>
+                {g.archived ? <span className="pill" style={{ marginLeft: 8 }}>archived</span> : null}
+              </span>
+
+              <details className="todos-section__menu">
+                <summary className="todos-section__menu-btn" aria-label="List options">
+                  <span aria-hidden>⋯</span>
+                </summary>
+                <div className="todos-section__menu-panel">
+                  <button
+                    type="button"
+                    className="todos-section__menu-item"
+                    disabled={!canMoveUp}
+                    onClick={() => moveTodoGroup(g.id, 'up')}
+                  >
+                    Move up
+                  </button>
+                  <button
+                    type="button"
+                    className="todos-section__menu-item"
+                    disabled={!canMoveDown}
+                    onClick={() => moveTodoGroup(g.id, 'down')}
+                  >
+                    Move down
+                  </button>
+                  <button
+                    type="button"
+                    className="todos-section__menu-item"
+                    onClick={() => updateTodoGroup(g.id, { pinned: !g.pinned })}
+                  >
+                    {g.pinned ? 'Unpin' : 'Pin to top'}
+                  </button>
+                  <button
+                    type="button"
+                    className="todos-section__menu-item"
+                    onClick={() => updateTodoGroup(g.id, { archived: !g.archived })}
+                  >
+                    {g.archived ? 'Unarchive' : 'Archive'}
+                  </button>
+                  <div className="todos-section__menu-sep" />
+                  <button
+                    type="button"
+                    className="todos-section__menu-item"
+                    disabled={totalActive === 0}
+                    onClick={() => {
+                      if (window.confirm(`Mark every open task in “${g.name}” as complete?`)) {
+                        markAllCompleteInGroup(g.id);
+                      }
+                    }}
+                  >
+                    Mark all complete
+                  </button>
+                  <button
+                    type="button"
+                    className="todos-section__menu-item"
+                    disabled={totalDone === 0}
+                    onClick={() => {
+                      if (window.confirm(`Remove all completed tasks from “${g.name}”?`)) {
+                        clearCompletedInGroup(g.id);
+                      }
+                    }}
+                  >
+                    Clear completed ({totalDone})
+                  </button>
+                  {data.todoGroups.length > 1 ? (
+                    <>
+                      <div className="todos-section__menu-sep" />
+                      <button
+                        type="button"
+                        className="todos-section__menu-item todos-section__menu-item--danger"
+                        onClick={() => {
+                          if (window.confirm(`Delete the “${g.name}” list? Its tasks will be moved to another list.`)) {
+                            removeTodoGroup(g.id);
+                          }
+                        }}
+                      >
+                        Delete list
+                      </button>
+                    </>
+                  ) : null}
+                </div>
+              </details>
             </div>
 
             {sectionOpen ? (
               <>
                 {active.length === 0 && done.length === 0 ? (
-                  <p className="todos-section__empty">No tasks in this list.</p>
+                  <p className="todos-section__empty">
+                    {q ? 'No matching tasks in this list.' : 'No tasks in this list.'}
+                  </p>
                 ) : (
                   <ul className="todos-list">
                     {active.map((it) => (
@@ -318,7 +495,7 @@ export function TodosPage() {
                         key={it.id}
                         item={it}
                         group={groupById.get(it.groupId) ?? g}
-                        groups={groups}
+                        groups={allGroupsSorted}
                         compact={compact}
                         onPatch={(id, patch) => updateTodoItem(id, patch)}
                         onToggle={toggleTodoItem}
@@ -330,7 +507,7 @@ export function TodosPage() {
                         key={it.id}
                         item={it}
                         group={groupById.get(it.groupId) ?? g}
-                        groups={groups}
+                        groups={allGroupsSorted}
                         compact={compact}
                         onPatch={(id, patch) => updateTodoItem(id, patch)}
                         onToggle={toggleTodoItem}
@@ -379,6 +556,8 @@ export function TodosPage() {
                 )}
               </>
             ) : null}
+            {/* unused idx kept for parity with future drag reordering */}
+            <span hidden>{idx}</span>
           </section>
         );
       })}

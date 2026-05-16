@@ -15,6 +15,9 @@ import {
   addTeam as addTeamFn,
   addTodoGroup as addTodoGroupFn,
   addTodoItem as addTodoItemFn,
+  clearCompletedInGroup as clearCompletedInGroupFn,
+  markAllCompleteInGroup as markAllCompleteInGroupFn,
+  moveTodoGroup as moveTodoGroupFn,
   removeItem as removeItemFn,
   removePerson as removePersonFn,
   removeTeam as removeTeamFn,
@@ -44,23 +47,49 @@ type Api = {
   updateTeam: (teamId: string, patch: Partial<Pick<Team, 'name' | 'status'>>) => void;
   removeTeam: (teamId: string) => void;
   addPerson: (teamId: string, name: string, title?: string) => void;
-  updatePerson: (id: string, patch: Partial<Pick<Person, 'name' | 'title' | 'scratchpad'>>) => void;
+  updatePerson: (id: string, patch: Partial<Pick<Person, 'name' | 'title' | 'scratchpad' | 'agenda'>>) => void;
   removePerson: (id: string) => void;
   updateUserProfile: (patch: Partial<Pick<UserProfile, 'displayName' | 'jobTitle' | 'department' | 'phone' | 'bio'>>) => void;
   toggleFavoriteTeam: (teamId: string) => void;
   addItem: (
     personId: string,
     kind: ItemKind,
-    fields?: Partial<Pick<Item, 'title' | 'body' | 'dueAt' | 'startAt' | 'remindAt' | 'url' | 'category' | 'goalStatus'>>,
+    fields?: Partial<
+      Pick<
+        Item,
+        'title' | 'body' | 'dueAt' | 'startAt' | 'remindAt' | 'remindRepeat' | 'url' | 'category' | 'goalStatus' | 'feedbackKind'
+      >
+    >,
   ) => void;
   updateItem: (
     id: string,
-    patch: Partial<Pick<Item, 'title' | 'body' | 'dueAt' | 'startAt' | 'remindAt' | 'url' | 'done' | 'category' | 'goalStatus'>>,
+    patch: Partial<
+      Pick<
+        Item,
+        | 'title'
+        | 'body'
+        | 'dueAt'
+        | 'startAt'
+        | 'remindAt'
+        | 'remindRepeat'
+        | 'url'
+        | 'done'
+        | 'category'
+        | 'goalStatus'
+        | 'feedbackKind'
+      >
+    >,
   ) => void;
   toggleItemDone: (id: string) => void;
   removeItem: (id: string) => void;
   addTodoGroup: (name: string) => void;
-  updateTodoGroup: (groupId: string, patch: Partial<Pick<TodoGroup, 'name' | 'sortOrder'>>) => void;
+  updateTodoGroup: (
+    groupId: string,
+    patch: Partial<Pick<TodoGroup, 'name' | 'sortOrder' | 'pinned' | 'archived'>>,
+  ) => void;
+  moveTodoGroup: (groupId: string, direction: 'up' | 'down') => void;
+  clearCompletedInGroup: (groupId: string) => void;
+  markAllCompleteInGroup: (groupId: string) => void;
   removeTodoGroup: (groupId: string) => void;
   addTodoItem: (groupId: string, title: string) => void;
   updateTodoItem: (id: string, patch: Partial<Pick<TodoItem, 'title' | 'groupId' | 'dueAt' | 'done'>>) => void;
@@ -203,6 +232,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       removeItem: (id) => update((x) => removeItemFn(x, id)),
       addTodoGroup: (name) => update((x) => addTodoGroupFn(x, name)),
       updateTodoGroup: (groupId, patch) => update((x) => updateTodoGroupFn(x, groupId, patch)),
+      moveTodoGroup: (groupId, direction) => update((x) => moveTodoGroupFn(x, groupId, direction)),
+      clearCompletedInGroup: (groupId) => update((x) => clearCompletedInGroupFn(x, groupId)),
+      markAllCompleteInGroup: (groupId) => update((x) => markAllCompleteInGroupFn(x, groupId)),
       removeTodoGroup: (groupId) => update((x) => removeTodoGroupFn(x, groupId)),
       addTodoItem: (groupId, title) => update((x) => addTodoItemFn(x, groupId, title)),
       updateTodoItem: (id, patch) => update((x) => updateTodoItemFn(x, id, patch)),
@@ -218,6 +250,25 @@ export function useAppData(): Api {
   const v = useContext(Ctx);
   if (!v) throw new Error('useAppData outside provider');
   return v;
+}
+
+/**
+ * Returns the next reminder timestamp for a recurring reminder.
+ * - 'daily'   → +1 day
+ * - 'weekly'  → +7 days
+ * - 'monthly' → +1 month (clamping day-of-month overflow handled by Date)
+ *
+ * If the original timestamp is in the past by more than one full cycle,
+ * we still only advance by a single cycle so the user can catch up on
+ * missed runs incrementally instead of all at once.
+ */
+function advanceReminder(iso: string, repeat: 'daily' | 'weekly' | 'monthly'): string | null {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  if (repeat === 'daily') d.setDate(d.getDate() + 1);
+  else if (repeat === 'weekly') d.setDate(d.getDate() + 7);
+  else d.setMonth(d.getMonth() + 1);
+  return d.toISOString();
 }
 
 export function useReminderWatcher() {
@@ -244,6 +295,7 @@ export function useReminderWatcher() {
         void Notification.requestPermission();
       }
 
+      const recurringAdvances: Record<string, string> = {};
       for (const id of dueIds) {
         const it = data.items.find((x) => x.id === id);
         if (!it) continue;
@@ -259,11 +311,26 @@ export function useReminderWatcher() {
         } else {
           void window.leeadman?.showNotification?.({ title, body });
         }
+
+        if (it.remindRepeat && it.remindAt) {
+          const next = advanceReminder(it.remindAt, it.remindRepeat);
+          if (next) recurringAdvances[id] = next;
+        }
       }
+
+      const advanceIds = new Set(Object.keys(recurringAdvances));
+      const oneShotDueIds = dueIds.filter((id) => !advanceIds.has(id));
 
       update((d) => ({
         ...d,
-        notifiedReminderIds: [...new Set([...d.notifiedReminderIds, ...dueIds])],
+        notifiedReminderIds: [...new Set([...d.notifiedReminderIds, ...oneShotDueIds])],
+        items: advanceIds.size
+          ? d.items.map((x) =>
+              recurringAdvances[x.id]
+                ? { ...x, remindAt: recurringAdvances[x.id], updatedAt: new Date().toISOString() }
+                : x,
+            )
+          : d.items,
       }));
     };
 

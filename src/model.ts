@@ -3,7 +3,7 @@ import { v4 as uuid } from 'uuid';
 /** Legacy single-team self identifier (used during migration). */
 export const LEGACY_SELF_PERSON_ID = '__self';
 
-export type ItemKind = 'task' | 'note' | 'goal' | 'document';
+export type ItemKind = 'task' | 'note' | 'goal' | 'document' | 'feedback';
 
 export type GoalStatus = 'planned' | 'active' | 'completed' | 'cancelled';
 
@@ -12,6 +12,14 @@ export const GOAL_STATUS_OPTIONS: { value: GoalStatus; label: string }[] = [
   { value: 'active', label: 'In progress' },
   { value: 'completed', label: 'Completed' },
   { value: 'cancelled', label: 'Cancelled' },
+];
+
+export type FeedbackKind = 'praise' | 'coaching' | 'concern';
+
+export const FEEDBACK_KIND_OPTIONS: { value: FeedbackKind; label: string; tone: string }[] = [
+  { value: 'praise', label: 'Praise', tone: 'ok' },
+  { value: 'coaching', label: 'Coaching', tone: 'info' },
+  { value: 'concern', label: 'Concern', tone: 'danger' },
 ];
 
 export type TeamStatus = 'active' | 'paused' | 'archived';
@@ -43,6 +51,8 @@ export interface Person {
   isSelf?: boolean;
   /** Free-form notes / 1:1 scratchpad (per person). */
   scratchpad?: string;
+  /** Persistent 1:1 meeting agenda (markdown). Cleared and carry-over on archive. */
+  agenda?: string;
   createdAt: string;
 }
 
@@ -60,7 +70,11 @@ export interface Item {
   startAt?: string;
   /** Goal workflow status; relevant only when kind === 'goal'. */
   goalStatus?: GoalStatus;
+  /** Feedback tone; relevant only when kind === 'feedback'. */
+  feedbackKind?: FeedbackKind;
   remindAt?: string;
+  /** Optional reminder recurrence ('daily' | 'weekly' | 'monthly'); fires repeatedly when set. */
+  remindRepeat?: ReminderRepeat;
   done: boolean;
   doneAt?: string;
   url?: string;
@@ -68,10 +82,23 @@ export interface Item {
   updatedAt: string;
 }
 
+export type ReminderRepeat = 'daily' | 'weekly' | 'monthly';
+
+export const REMIND_REPEAT_OPTIONS: { value: '' | ReminderRepeat; label: string }[] = [
+  { value: '', label: 'One-time' },
+  { value: 'daily', label: 'Daily' },
+  { value: 'weekly', label: 'Weekly' },
+  { value: 'monthly', label: 'Monthly' },
+];
+
 export interface TodoGroup {
   id: string;
   name: string;
   sortOrder: number;
+  /** Pinned groups are sorted above the rest, in their pinned order. */
+  pinned?: boolean;
+  /** Archived groups are hidden from the main view by default. */
+  archived?: boolean;
   createdAt: string;
 }
 
@@ -188,6 +215,7 @@ function parsePeople(raw: unknown[]): Person[] {
       title: typeof p.title === 'string' ? p.title : undefined,
       isSelf: !!p.isSelf || (typeof p.id === 'string' && p.id.startsWith('__self__')),
       scratchpad: typeof p.scratchpad === 'string' ? p.scratchpad : '',
+      agenda: typeof p.agenda === 'string' ? p.agenda : '',
       createdAt: typeof p.createdAt === 'string' ? p.createdAt : nowIso(),
     }));
 }
@@ -210,16 +238,29 @@ function parseTeams(raw: unknown[]): Team[] {
 
 function parseItems(raw: unknown[]): Item[] {
   const goals: GoalStatus[] = ['planned', 'active', 'completed', 'cancelled'];
+  const feedbackKinds: FeedbackKind[] = ['praise', 'coaching', 'concern'];
+  const repeats: ReminderRepeat[] = ['daily', 'weekly', 'monthly'];
+  const knownKinds: ItemKind[] = ['task', 'note', 'goal', 'document', 'feedback'];
   return raw
     .filter((it): it is Record<string, unknown> => !!it && typeof it === 'object')
     .map((it) => {
-      const kind: ItemKind = (['task', 'note', 'goal', 'document'] as const).includes(it.kind as ItemKind)
-        ? (it.kind as ItemKind)
-        : 'note';
+      const kind: ItemKind = knownKinds.includes(it.kind as ItemKind) ? (it.kind as ItemKind) : 'note';
       const goalStatusRaw = it.goalStatus;
       const goalStatus =
         kind === 'goal' && typeof goalStatusRaw === 'string' && goals.includes(goalStatusRaw as GoalStatus)
           ? (goalStatusRaw as GoalStatus)
+          : undefined;
+      const feedbackRaw = it.feedbackKind;
+      const feedbackKind =
+        kind === 'feedback' && typeof feedbackRaw === 'string' && feedbackKinds.includes(feedbackRaw as FeedbackKind)
+          ? (feedbackRaw as FeedbackKind)
+          : kind === 'feedback'
+            ? 'coaching'
+            : undefined;
+      const repeatRaw = it.remindRepeat;
+      const remindRepeat =
+        typeof repeatRaw === 'string' && repeats.includes(repeatRaw as ReminderRepeat)
+          ? (repeatRaw as ReminderRepeat)
           : undefined;
       return {
         id: typeof it.id === 'string' ? it.id : uuid(),
@@ -230,7 +271,9 @@ function parseItems(raw: unknown[]): Item[] {
         dueAt: typeof it.dueAt === 'string' ? it.dueAt : undefined,
         startAt: typeof it.startAt === 'string' ? it.startAt : undefined,
         goalStatus,
+        feedbackKind,
         remindAt: typeof it.remindAt === 'string' ? it.remindAt : undefined,
+        remindRepeat,
         done: !!it.done,
         doneAt: typeof it.doneAt === 'string' ? it.doneAt : undefined,
         url: typeof it.url === 'string' ? it.url : undefined,
@@ -249,6 +292,8 @@ function parseTodoGroups(raw: unknown[]): TodoGroup[] {
       id: typeof g.id === 'string' ? g.id : uuid(),
       name: typeof g.name === 'string' && g.name.trim() ? g.name.trim() : 'List',
       sortOrder: typeof g.sortOrder === 'number' ? g.sortOrder : i,
+      pinned: g.pinned === true ? true : undefined,
+      archived: g.archived === true ? true : undefined,
       createdAt: typeof g.createdAt === 'string' ? g.createdAt : nowIso(),
     }));
 }

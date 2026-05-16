@@ -2,6 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { registerServiceWorker } from './pwa';
 
 const rootEl = document.getElementById('root');
 if (!rootEl) {
@@ -15,3 +16,5 @@ createRoot(rootEl).render(
     </ErrorBoundary>
   </StrictMode>,
 );
+
+registerServiceWorker();

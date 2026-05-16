@@ -2,17 +2,55 @@ import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
 import { IcArrowRight, IcCheck, IcPencil, IcPlus, IcSave, IcTrash, IcUndo, IcX } from '../components/icons';
 import { Button } from '../components/ui/Button';
+import { MarkdownEditor, MarkdownView } from '../components/ui/MarkdownEditor';
 import { useAppData } from '../AppDataContext';
 import { distinctCategoriesForTeam, SUGGESTED_CATEGORIES } from '../lib/categories';
 import { fromLocalDatetimeValue, formatShort, isPast, toLocalDatetimeValue } from '../lib/datetime';
 import { kindLabel } from '../lib/labels';
 import { teamLeader, teamMe, teamPeople as teamPeoplePath } from '../lib/teamPaths';
 import { PATH_TEAMS } from '../lib/routes';
-import type { GoalStatus, Item, ItemKind } from '../model';
-import { GOAL_STATUS_OPTIONS, getLeaderPerson, getSelfPerson, isLeaderPerson, isSelfPerson, teamPeople } from '../model';
+import type { FeedbackKind, GoalStatus, Item, ItemKind, Person, ReminderRepeat } from '../model';
+import {
+  FEEDBACK_KIND_OPTIONS,
+  GOAL_STATUS_OPTIONS,
+  REMIND_REPEAT_OPTIONS,
+  getLeaderPerson,
+  getSelfPerson,
+  isLeaderPerson,
+  isSelfPerson,
+  teamPeople,
+} from '../model';
 
 function goalStatusLabel(gs?: GoalStatus): string {
   return GOAL_STATUS_OPTIONS.find((o) => o.value === gs)?.label ?? '—';
+}
+
+function feedbackLabel(fk?: FeedbackKind): string {
+  return FEEDBACK_KIND_OPTIONS.find((o) => o.value === fk)?.label ?? 'Feedback';
+}
+
+function feedbackTone(fk?: FeedbackKind): string {
+  return FEEDBACK_KIND_OPTIONS.find((o) => o.value === fk)?.tone ?? 'info';
+}
+
+/**
+ * Buffers item-body markdown locally and flushes on blur or when the user
+ * switches to preview mode. Avoids one persist round-trip per keystroke
+ * while still preserving cursor position.
+ */
+function ItemBodyField({ initial, onCommit }: { initial: string; onCommit: (next: string) => void }) {
+  const [value, setValue] = useState(initial);
+  return (
+    <MarkdownEditor
+      value={value}
+      onChange={setValue}
+      onBlur={() => {
+        if (value !== initial) onCommit(value);
+      }}
+      placeholder="Write the body in markdown…"
+      rows={6}
+    />
+  );
 }
 
 export function TeamMePage() {
@@ -148,6 +186,8 @@ export function PersonRoute() {
   return <PersonWorkspace personId={personId} />;
 }
 
+type WorkspaceTab = 'workspace' | 'timeline' | 'meeting';
+
 export function PersonWorkspace({ personId }: { personId: string }) {
   const { teamId } = useParams();
   const { data, updatePerson, addItem, updateItem, toggleItemDone, removeItem } = useAppData();
@@ -156,6 +196,7 @@ export function PersonWorkspace({ personId }: { personId: string }) {
   const [title, setTitle] = useState('');
   const [scratchpad, setScratchpad] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
+  const [tab, setTab] = useState<WorkspaceTab>('workspace');
 
   const items = useMemo(() => data.items.filter((i) => i.personId === personId), [data.items, personId]);
 
@@ -215,8 +256,115 @@ export function PersonWorkspace({ personId }: { personId: string }) {
             Team members
           </Link>
         </div>
+        <nav className="tabs" role="tablist" aria-label="Person workspace tabs">
+          <button
+            type="button"
+            className={`tabs__tab${tab === 'workspace' ? ' tabs__tab--active' : ''}`}
+            role="tab"
+            aria-selected={tab === 'workspace'}
+            onClick={() => setTab('workspace')}
+          >
+            Workspace
+          </button>
+          <button
+            type="button"
+            className={`tabs__tab${tab === 'timeline' ? ' tabs__tab--active' : ''}`}
+            role="tab"
+            aria-selected={tab === 'timeline'}
+            onClick={() => setTab('timeline')}
+          >
+            Timeline
+          </button>
+          <button
+            type="button"
+            className={`tabs__tab${tab === 'meeting' ? ' tabs__tab--active' : ''}`}
+            role="tab"
+            aria-selected={tab === 'meeting'}
+            onClick={() => setTab('meeting')}
+          >
+            1:1 Mode
+          </button>
+        </nav>
       </header>
 
+      {tab === 'timeline' ? (
+        <PersonTimeline items={items} />
+      ) : tab === 'meeting' ? (
+        <PersonMeetingMode person={person} items={items} addItem={addItem} updatePerson={updatePerson} />
+      ) : (
+        <PersonWorkspaceTabContent
+          person={person}
+          name={name}
+          setName={setName}
+          title={title}
+          setTitle={setTitle}
+          scratchpad={scratchpad}
+          setScratchpad={setScratchpad}
+          updatePerson={updatePerson}
+          isSelf={isSelf}
+          isLeader={isLeader}
+          items={items}
+          categoryHints={categoryHints}
+          teamId={teamId}
+          openId={openId}
+          setOpenId={setOpenId}
+          personId={personId}
+          addItem={addItem}
+          updateItem={updateItem}
+          toggleItemDone={toggleItemDone}
+          removeItem={removeItem}
+        />
+      )}
+    </div>
+  );
+}
+
+function PersonWorkspaceTabContent(props: {
+  person: Person;
+  name: string;
+  setName: (v: string) => void;
+  title: string;
+  setTitle: (v: string) => void;
+  scratchpad: string;
+  setScratchpad: (v: string) => void;
+  updatePerson: ReturnType<typeof useAppData>['updatePerson'];
+  isSelf: boolean;
+  isLeader: boolean;
+  items: Item[];
+  categoryHints: string[];
+  teamId: string;
+  openId: string | null;
+  setOpenId: (id: string | null) => void;
+  personId: string;
+  addItem: ReturnType<typeof useAppData>['addItem'];
+  updateItem: ReturnType<typeof useAppData>['updateItem'];
+  toggleItemDone: ReturnType<typeof useAppData>['toggleItemDone'];
+  removeItem: ReturnType<typeof useAppData>['removeItem'];
+}) {
+  const {
+    person,
+    name,
+    setName,
+    title,
+    setTitle,
+    scratchpad,
+    setScratchpad,
+    updatePerson,
+    isSelf,
+    isLeader,
+    items,
+    categoryHints,
+    teamId,
+    openId,
+    setOpenId,
+    personId,
+    addItem,
+    updateItem,
+    toggleItemDone,
+    removeItem,
+  } = props;
+  return (
+    <>
       <section className="card">
         <h2 className="card__title">Profile</h2>
         <form
@@ -256,14 +404,13 @@ export function PersonWorkspace({ personId }: { personId: string }) {
       <section className="card">
         <h2 className="card__title">Scratchpad</h2>
         <p className="muted small">
-          Free-form notes: 1:1 drafts, stream-of-thought, talking points. Saved alongside the profile.
+          Free-form notes (markdown): 1:1 drafts, stream-of-thought, talking points. Saved alongside the profile.
         </p>
-        <textarea
-          className="textarea"
-          rows={8}
-          placeholder="Write here…"
+        <MarkdownEditor
           value={scratchpad}
-          onChange={(e) => setScratchpad(e.target.value)}
+          onChange={setScratchpad}
+          placeholder="Write here…"
+          rows={10}
         />
         <div className="row" style={{ marginTop: 10 }}>
           <Button type="button" variant="secondary" icon={<IcSave size={17} />} onClick={() => person && updatePerson(person.id, { scratchpad })}>
@@ -312,6 +459,19 @@ export function PersonWorkspace({ personId }: { personId: string }) {
         onRemove={removeItem}
       />
       <KindSection
+        title="Feedback log"
+        kind="feedback"
+        categoryHints={categoryHints}
+        teamId={teamId}
+        items={items}
+        openId={openId}
+        setOpenId={setOpenId}
+        onAdd={(fields) => addItem(personId, 'feedback', fields)}
+        onUpdate={updateItem}
+        onToggle={toggleItemDone}
+        onRemove={removeItem}
+      />
+      <KindSection
         title="Documents"
         kind="document"
         categoryHints={categoryHints}
@@ -324,7 +484,7 @@ export function PersonWorkspace({ personId }: { personId: string }) {
         onToggle={toggleItemDone}
         onRemove={removeItem}
       />
-    </div>
+    </>
   );
 }
 
@@ -349,11 +509,31 @@ function KindSection({
   openId: string | null;
   setOpenId: (id: string | null) => void;
   onAdd: (
-    fields: Partial<Pick<Item, 'title' | 'body' | 'dueAt' | 'startAt' | 'remindAt' | 'url' | 'category' | 'goalStatus'>>,
+    fields: Partial<
+      Pick<
+        Item,
+        'title' | 'body' | 'dueAt' | 'startAt' | 'remindAt' | 'remindRepeat' | 'url' | 'category' | 'goalStatus' | 'feedbackKind'
+      >
+    >,
   ) => void;
   onUpdate: (
     id: string,
-    patch: Partial<Pick<Item, 'title' | 'body' | 'dueAt' | 'startAt' | 'remindAt' | 'url' | 'done' | 'category' | 'goalStatus'>>,
+    patch: Partial<
+      Pick<
+        Item,
+        | 'title'
+        | 'body'
+        | 'dueAt'
+        | 'startAt'
+        | 'remindAt'
+        | 'remindRepeat'
+        | 'url'
+        | 'done'
+        | 'category'
+        | 'goalStatus'
+        | 'feedbackKind'
+      >
+    >,
   ) => void;
   onToggle: (id: string) => void;
   onRemove: (id: string) => void;
@@ -365,6 +545,7 @@ function KindSection({
   const [draftStartAt, setDraftStartAt] = useState('');
   const [draftDueAt, setDraftDueAt] = useState('');
   const [draftGoalStatus, setDraftGoalStatus] = useState<GoalStatus>('planned');
+  const [draftFeedbackKind, setDraftFeedbackKind] = useState<FeedbackKind>('coaching');
   const listId = `cat-${teamId}-${kind}`;
 
   return (
@@ -392,6 +573,12 @@ function KindSection({
               dueAt: draftDueAt ? fromLocalDatetimeValue(draftDueAt) : undefined,
               goalStatus: draftGoalStatus,
             });
+          } else if (kind === 'feedback') {
+            onAdd({
+              title: draftTitle.trim(),
+              category: draftCategory.trim() || undefined,
+              feedbackKind: draftFeedbackKind,
+            });
           } else {
             onAdd({ title: draftTitle.trim(), category: draftCategory.trim() || undefined });
           }
@@ -401,6 +588,7 @@ function KindSection({
           setDraftStartAt('');
           setDraftDueAt('');
           setDraftGoalStatus('planned');
+          setDraftFeedbackKind('coaching');
         }}
       >
         {kind === 'goal' ? (
@@ -458,6 +646,22 @@ function KindSection({
               </label>
             </>
           ) : null}
+          {kind === 'feedback' ? (
+            <label className="field" style={{ minWidth: 160 }}>
+              <span className="small">Type</span>
+              <select
+                className="select"
+                value={draftFeedbackKind}
+                onChange={(e) => setDraftFeedbackKind(e.target.value as FeedbackKind)}
+              >
+                {FEEDBACK_KIND_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           {kind === 'document' ? (
             <input className="input input--grow" placeholder="https://…" value={draftUrl} onChange={(e) => setDraftUrl(e.target.value)} />
           ) : null}
@@ -485,6 +689,11 @@ function KindSection({
                     )}{' '}
                     {it.done ? <span className="pill pill--ok">done</span> : null}
                     {it.kind === 'goal' ? <span className="pill">{goalStatusLabel(it.goalStatus)}</span> : null}
+                    {it.kind === 'feedback' ? (
+                      <span className={`pill pill--${feedbackTone(it.feedbackKind)}`}>
+                        {feedbackLabel(it.feedbackKind)}
+                      </span>
+                    ) : null}
                   </div>
                   <div className="muted small">
                     {kindLabel(it.kind)}
@@ -598,19 +807,31 @@ function KindSection({
                       </select>
                     </label>
                   ) : null}
-                  <label className="field">
-                    <span>Content</span>
-                    <textarea
-                      className="textarea"
-                      defaultValue={it.body}
-                      key={`b-${it.id}-${it.updatedAt}`}
-                      rows={5}
-                      onBlur={(e) => {
-                        const v = e.target.value;
-                        if (v !== it.body) onUpdate(it.id, { body: v });
-                      }}
+                  {it.kind === 'feedback' ? (
+                    <label className="field">
+                      <span>Feedback type</span>
+                      <select
+                        className="select"
+                        defaultValue={it.feedbackKind ?? 'coaching'}
+                        key={`fk-${it.id}-${it.updatedAt}-${it.feedbackKind ?? ''}`}
+                        onChange={(e) => onUpdate(it.id, { feedbackKind: e.target.value as FeedbackKind })}
+                      >
+                        {FEEDBACK_KIND_OPTIONS.map((o) => (
+                          <option key={o.value} value={o.value}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : null}
+                  <div className="field">
+                    <span>Content (markdown)</span>
+                    <ItemBodyField
+                      key={`b-${it.id}`}
+                      initial={it.body}
+                      onCommit={(v) => onUpdate(it.id, { body: v })}
                     />
-                  </label>
+                  </div>
                   {it.kind === 'goal' ? (
                     <label className="field">
                       <span>Start</span>
@@ -645,9 +866,29 @@ function KindSection({
                       onBlur={(e) => onUpdate(it.id, { remindAt: fromLocalDatetimeValue(e.target.value) })}
                     />
                   </label>
+                  <label className="field">
+                    <span>Repeat</span>
+                    <select
+                      className="select"
+                      defaultValue={it.remindRepeat ?? ''}
+                      key={`rr-${it.id}-${it.updatedAt}-${it.remindRepeat ?? ''}`}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        onUpdate(it.id, { remindRepeat: (v ? (v as ReminderRepeat) : undefined) });
+                      }}
+                    >
+                      {REMIND_REPEAT_OPTIONS.map((o) => (
+                        <option key={o.value || 'none'} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
                 </div>
               ) : it.body ? (
-                <pre className="pre">{it.body}</pre>
+                <div className="list__body-preview">
+                  <MarkdownView value={it.body} />
+                </div>
               ) : null}
             </li>
           ))}
@@ -655,4 +896,238 @@ function KindSection({
       )}
     </section>
   );
+}
+
+/* ============================================================
+   Person timeline
+   A chronological feed of every item attached to a person.
+   Grouped by day, filterable by kind.
+   ============================================================ */
+
+type TimelineFilter = 'all' | ItemKind;
+
+const TIMELINE_FILTERS: { value: TimelineFilter; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'task', label: 'Tasks' },
+  { value: 'goal', label: 'Goals' },
+  { value: 'note', label: 'Notes' },
+  { value: 'feedback', label: 'Feedback' },
+  { value: 'document', label: 'Documents' },
+];
+
+function PersonTimeline({ items }: { items: Item[] }) {
+  const [filter, setFilter] = useState<TimelineFilter>('all');
+
+  const filtered = useMemo(() => {
+    const base = filter === 'all' ? items : items.filter((i) => i.kind === filter);
+    return [...base].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }, [items, filter]);
+
+  const groups = useMemo(() => groupByDay(filtered), [filtered]);
+
+  return (
+    <section className="card">
+      <h2 className="card__title">Timeline</h2>
+      <p className="muted small">A chronological feed of every interaction. Useful for performance reviews and growth conversations.</p>
+
+      <div className="timeline__filters" role="tablist" aria-label="Timeline filters">
+        {TIMELINE_FILTERS.map((f) => (
+          <button
+            key={f.value}
+            type="button"
+            className={`timeline__filter${filter === f.value ? ' timeline__filter--active' : ''}`}
+            onClick={() => setFilter(f.value)}
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
+
+      {groups.length === 0 ? (
+        <div className="timeline__empty">No matching entries.</div>
+      ) : (
+        <div className="timeline">
+          {groups.map((g) => (
+            <div className="timeline__group" key={g.key}>
+              <p className="timeline__date">{g.label}</p>
+              {g.items.map((it) => (
+                <article className="timeline__entry" key={it.id} data-kind={it.kind}>
+                  <div className="timeline__head">
+                    <span className="timeline__title">{it.title || '(untitled)'}</span>
+                    <span className="pill">{kindLabel(it.kind)}</span>
+                    {it.done ? <span className="pill pill--ok">done</span> : null}
+                    {it.kind === 'goal' ? <span className="pill">{goalStatusLabel(it.goalStatus)}</span> : null}
+                    {it.kind === 'feedback' ? (
+                      <span className={`pill pill--${feedbackTone(it.feedbackKind)}`}>
+                        {feedbackLabel(it.feedbackKind)}
+                      </span>
+                    ) : null}
+                    {it.category ? <span className="pill">{it.category}</span> : null}
+                  </div>
+                  <div className="timeline__meta">
+                    Updated {formatShort(it.updatedAt)}
+                    {it.dueAt ? ` · due ${formatShort(it.dueAt)}` : ''}
+                  </div>
+                  {it.body ? (
+                    <div className="timeline__body">
+                      <MarkdownView value={it.body} />
+                    </div>
+                  ) : null}
+                  {it.kind === 'document' && it.url ? (
+                    <div className="timeline__body">
+                      <a href={it.url} target="_blank" rel="noreferrer">
+                        {it.url}
+                      </a>
+                    </div>
+                  ) : null}
+                </article>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function groupByDay(items: Item[]): { key: string; label: string; items: Item[] }[] {
+  const map = new Map<string, Item[]>();
+  for (const it of items) {
+    const d = new Date(it.updatedAt);
+    if (Number.isNaN(d.getTime())) continue;
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    if (!map.has(key)) map.set(key, []);
+    map.get(key)!.push(it);
+  }
+  const today = new Date();
+  const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yKey = `${yesterday.getFullYear()}-${String(yesterday.getMonth() + 1).padStart(2, '0')}-${String(yesterday.getDate()).padStart(2, '0')}`;
+  return Array.from(map.entries())
+    .sort((a, b) => b[0].localeCompare(a[0]))
+    .map(([key, list]) => ({
+      key,
+      label: key === todayKey ? 'Today' : key === yKey ? 'Yesterday' : friendlyDay(key),
+      items: list,
+    }));
+}
+
+function friendlyDay(key: string): string {
+  const [y, m, d] = key.split('-').map((n) => parseInt(n, 10));
+  const date = new Date(y, m - 1, d);
+  return date.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+}
+
+/* ============================================================
+   1:1 Mode
+   - Persistent agenda (markdown) on the person record
+   - "Archive meeting" turns the agenda into a dated note item
+     and starts a fresh agenda with carry-over checkboxes
+   ============================================================ */
+
+function PersonMeetingMode({
+  person,
+  items,
+  addItem,
+  updatePerson,
+}: {
+  person: Person;
+  items: Item[];
+  addItem: ReturnType<typeof useAppData>['addItem'];
+  updatePerson: ReturnType<typeof useAppData>['updatePerson'];
+}) {
+  const [agenda, setAgenda] = useState<string>(person.agenda ?? defaultAgenda());
+
+  useEffect(() => {
+    setAgenda(person.agenda ?? defaultAgenda());
+  }, [person.id, person.agenda]);
+
+  const meetings = useMemo(
+    () =>
+      items
+        .filter((i) => i.kind === 'note' && i.category === '1:1')
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+    [items],
+  );
+
+  function save() {
+    updatePerson(person.id, { agenda });
+  }
+
+  function archive() {
+    if (!agenda.trim()) return;
+    const today = new Date();
+    const title = `1:1 · ${today.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}`;
+    addItem(person.id, 'note', { title, body: agenda, category: '1:1' });
+    const carryOver = extractCarryOver(agenda);
+    const next = `${defaultAgenda()}${carryOver ? `\n\n## Carry-over from last meeting\n${carryOver}` : ''}`;
+    setAgenda(next);
+    updatePerson(person.id, { agenda: next });
+  }
+
+  return (
+    <>
+      <section className="card">
+        <h2 className="card__title">Current 1:1 agenda</h2>
+        <p className="muted small">
+          A persistent agenda for your next 1:1. Use `- [ ]` for action items — unchecked ones carry over when you
+          archive the meeting.
+        </p>
+        <MarkdownEditor value={agenda} onChange={setAgenda} placeholder="Plan your next 1:1…" rows={14} />
+        <div className="row" style={{ marginTop: 10 }}>
+          <Button type="button" variant="secondary" icon={<IcSave size={17} />} onClick={save}>
+            Save agenda
+          </Button>
+          <Button type="button" variant="primary" icon={<IcCheck size={17} />} onClick={archive}>
+            Archive meeting
+          </Button>
+        </div>
+      </section>
+
+      <section className="card">
+        <h2 className="card__title">Past meetings <span className="pill">{meetings.length}</span></h2>
+        {meetings.length === 0 ? (
+          <p className="muted">No archived meetings yet.</p>
+        ) : (
+          <ul className="list">
+            {meetings.map((m) => (
+              <li key={m.id} className="list__block">
+                <div className="list__title">{m.title}</div>
+                <div className="muted small">Archived {formatShort(m.createdAt)}</div>
+                {m.body ? (
+                  <div className="list__body-preview">
+                    <MarkdownView value={m.body} />
+                  </div>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </>
+  );
+}
+
+function defaultAgenda(): string {
+  return [
+    '## Wins',
+    '- ',
+    '',
+    '## Blockers',
+    '- ',
+    '',
+    '## Action items',
+    '- [ ] ',
+    '',
+    '## Notes',
+    '',
+  ].join('\n');
+}
+
+function extractCarryOver(agenda: string): string {
+  // Pull lines that are unchecked checklist items.
+  const lines = agenda.split('\n');
+  const open = lines.filter((l) => /^\s*-\s*\[\s\]\s*\S/.test(l));
+  return open.join('\n').trim();
 }

@@ -1,3 +1,4 @@
+import type { ReactElement } from 'react';
 import { BrowserRouter, HashRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { AccountProvider, useAccount } from './AccountContext';
 import { AuthGate, AuthProvider } from './AuthContext';
@@ -15,6 +16,8 @@ import { RegisterPage } from './views/RegisterPage';
 import { Settings } from './views/Settings';
 import { TeamDashboard } from './views/TeamDashboard';
 import { TodosPage } from './views/TodosPage';
+import { AgendaPage } from './views/AgendaPage';
+import { CommandPalette } from './components/CommandPalette';
 import './app.css';
 
 /** Electron .app / loadFile() uses the `file:` protocol where BrowserRouter renders blank; HashRouter is required there. */
@@ -43,6 +46,22 @@ function ProtectedShell() {
       </AuthProvider>
     </AppDataProvider>
   );
+}
+
+/**
+ * When the app is launched from the iOS/Android home-screen shortcut
+ * (start_url has `?source=pwa`) and the user lands on `/`, jump straight
+ * into the To-dos screen — the primary mobile use-case.
+ */
+function MobileStartRedirect({ children }: { children: ReactElement }) {
+  const location = useLocation();
+  const isPwaLaunch =
+    typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).get('source') === 'pwa';
+  if (isPwaLaunch && location.pathname === '/') {
+    return <Navigate to="/todos" replace />;
+  }
+  return children;
 }
 
 export default function App() {
@@ -76,14 +95,24 @@ function Boot() {
 function AppRoutes() {
   useReminderWatcher();
   return (
-    <Routes>
+    <>
+      <CommandPalette />
+      <Routes>
       <Route element={<Layout />}>
-        <Route index element={<HomePage />} />
+        <Route
+          index
+          element={
+            <MobileStartRedirect>
+              <HomePage />
+            </MobileStartRedirect>
+          }
+        />
         <Route path={PATH_TEAMS.replace(/^\//, '')} element={<HomeTeams />} />
         <Route path="todos" element={<TodosPage />} />
+        <Route path="agenda" element={<AgendaPage />} />
         <Route path="profile" element={<ProfilePage />} />
         <Route path="settings" element={<Settings />} />
-        <Route path="teams/:teamId" element={<TeamLayout />}>
+          <Route path="teams/:teamId" element={<TeamLayout />}>
           <Route index element={<TeamDashboard />} />
           <Route path="me" element={<TeamMePage />} />
           <Route path="leader" element={<TeamLeaderPage />} />
@@ -91,6 +120,7 @@ function AppRoutes() {
           <Route path="people/:personId" element={<PersonRoute />} />
         </Route>
       </Route>
-    </Routes>
+      </Routes>
+    </>
   );
 }

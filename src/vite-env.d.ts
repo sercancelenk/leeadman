@@ -4,6 +4,11 @@ export {};
 
 type AccountUser = { id: string; email: string; displayName?: string };
 
+interface ImportMetaEnv {
+  /** "1" when the bundle is built for the PWA (GitHub Pages) target. */
+  readonly LEEADMAN_PWA?: string;
+}
+
 declare global {
   interface Window {
     leeadman?: {

@@ -380,6 +380,14 @@ code {
   background: rgba(74, 222, 128, 0.15);
   color: var(--ok);
 }
+.pill--info {
+  background: rgba(91, 141, 239, 0.18);
+  color: var(--accent);
+}
+.pill--danger {
+  background: rgba(248, 113, 113, 0.18);
+  color: var(--danger);
+}
 
 .tiles {
   display: grid;
@@ -2222,4 +2230,673 @@ code {
 .home-page__more,
 .home-page__hint {
   margin-top: 14px;
+}
+
+/* ============================================================
+   Markdown editor + prose
+   ============================================================ */
+.md-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.md-editor__tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.md-editor__tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 5px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+
+.md-editor__tab:hover {
+  border-color: rgba(126, 176, 255, 0.5);
+  color: var(--text);
+}
+
+.md-editor__tab--active {
+  background: var(--accent-soft);
+  border-color: rgba(91, 141, 239, 0.5);
+  color: var(--text);
+}
+
+.md-editor__hint {
+  margin-left: auto;
+  font-style: italic;
+}
+
+.md-editor__textarea {
+  font-family: ui-monospace, SFMono-Regular, 'JetBrains Mono', Menlo, Consolas, monospace;
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
+.md-editor__preview {
+  min-height: 120px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+}
+
+.md-editor__empty {
+  padding: 14px 16px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  background: transparent;
+  margin: 0;
+}
+
+.md-prose {
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: inherit;
+}
+
+.md-prose > :first-child { margin-top: 0; }
+.md-prose > :last-child  { margin-bottom: 0; }
+
+.md-prose h1,
+.md-prose h2,
+.md-prose h3,
+.md-prose h4 {
+  margin: 1.3em 0 0.5em;
+  line-height: 1.25;
+  font-weight: 700;
+}
+
+.md-prose h1 { font-size: 1.4em; }
+.md-prose h2 { font-size: 1.2em; }
+.md-prose h3 { font-size: 1.05em; }
+.md-prose h4 { font-size: 1em; color: var(--muted); }
+
+.md-prose p {
+  margin: 0.6em 0;
+}
+
+.md-prose a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.md-prose ul,
+.md-prose ol {
+  padding-left: 1.4em;
+  margin: 0.5em 0;
+}
+
+.md-prose li {
+  margin: 0.25em 0;
+}
+
+.md-prose li > input[type='checkbox'] {
+  margin-right: 6px;
+  transform: translateY(1px);
+}
+
+.md-prose blockquote {
+  margin: 0.6em 0;
+  padding: 0.3em 0.9em;
+  border-left: 3px solid var(--accent-soft);
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 4px;
+}
+
+.md-prose code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.92em;
+  background: rgba(255, 255, 255, 0.06);
+  padding: 1px 6px;
+  border-radius: 5px;
+}
+
+.md-prose pre {
+  margin: 0.7em 0;
+  padding: 12px 14px;
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 8px;
+  overflow-x: auto;
+}
+
+.md-prose pre code {
+  background: transparent;
+  padding: 0;
+}
+
+.md-prose table {
+  border-collapse: collapse;
+  margin: 0.7em 0;
+  width: 100%;
+  font-size: 0.95em;
+}
+
+.md-prose th,
+.md-prose td {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.md-prose th {
+  background: rgba(255, 255, 255, 0.04);
+  font-weight: 600;
+}
+
+.md-prose hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 1em 0;
+}
+
+[data-theme='light'] .md-prose code {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme='light'] .md-prose pre {
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--text);
+}
+
+.list__body-preview {
+  margin-top: 10px;
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+[data-theme='light'] .list__body-preview {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+/* ============================================================
+   Tabs (person workspace)
+   ============================================================ */
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin-top: 14px;
+  padding-bottom: 1px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tabs__tab {
+  background: transparent;
+  border: 0;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--muted);
+  padding: 8px 14px;
+  cursor: pointer;
+  position: relative;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+}
+
+.tabs__tab:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.tabs__tab--active {
+  color: var(--text);
+}
+
+.tabs__tab--active::after {
+  content: '';
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: -1px;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 2px;
+}
+
+/* ============================================================
+   Person timeline
+   ============================================================ */
+.timeline {
+  position: relative;
+  margin-top: 12px;
+  padding-left: 22px;
+}
+
+.timeline::before {
+  content: '';
+  position: absolute;
+  left: 7px;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  background: var(--border);
+  border-radius: 2px;
+}
+
+.timeline__group {
+  margin-bottom: 28px;
+}
+
+.timeline__date {
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin: 0 0 10px -22px;
+  padding-left: 22px;
+}
+
+.timeline__entry {
+  position: relative;
+  padding: 10px 14px;
+  margin-bottom: 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.timeline__entry::before {
+  content: '';
+  position: absolute;
+  left: -19px;
+  top: 16px;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--bg);
+  border: 2px solid var(--accent);
+}
+
+.timeline__entry[data-kind='feedback']::before { border-color: #fbbf24; }
+.timeline__entry[data-kind='goal']::before     { border-color: var(--ok); }
+.timeline__entry[data-kind='task']::before     { border-color: var(--accent); }
+.timeline__entry[data-kind='note']::before     { border-color: var(--muted); }
+.timeline__entry[data-kind='document']::before { border-color: #a78bfa; }
+.timeline__entry[data-kind='meeting']::before  { border-color: #f472b6; }
+
+.timeline__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.timeline__title {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.timeline__meta {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.timeline__body {
+  margin-top: 8px;
+}
+
+.timeline__filters {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.timeline__filter {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.timeline__filter--active {
+  background: var(--accent-soft);
+  border-color: rgba(91, 141, 239, 0.5);
+  color: var(--text);
+}
+
+.timeline__empty {
+  padding: 28px 18px;
+  text-align: center;
+  color: var(--muted);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+}
+
+/* ============================================================
+   Command palette (⌘K)
+   ============================================================ */
+.cmdp {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+  z-index: 200;
+}
+
+.cmdp__panel {
+  width: min(620px, 92vw);
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+}
+
+.cmdp__input-wrap {
+  position: relative;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.cmdp__input {
+  width: 100%;
+  font: inherit;
+  font-size: 15px;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  outline: none;
+}
+
+.cmdp__kbd {
+  position: absolute;
+  right: 18px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 11px;
+  color: var(--muted);
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.cmdp__results {
+  overflow-y: auto;
+  flex: 1 1 auto;
+  padding: 6px 0;
+}
+
+.cmdp__group {
+  padding: 6px 0;
+}
+
+.cmdp__group-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  padding: 4px 16px;
+}
+
+.cmdp__row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  background: transparent;
+  border: 0;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.cmdp__row:hover,
+.cmdp__row--active {
+  background: var(--accent-soft);
+}
+
+.cmdp__icon {
+  display: inline-flex;
+  color: var(--muted);
+}
+
+.cmdp__label {
+  flex: 1 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cmdp__hint {
+  font-size: 11.5px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.cmdp__empty {
+  padding: 20px 16px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.cmdp__footer {
+  border-top: 1px solid var(--border);
+  padding: 8px 16px;
+  display: flex;
+  gap: 18px;
+  font-size: 11.5px;
+}
+
+/* ============================================================
+   To-do lists — toolbar, pin, archive, counts
+   ============================================================ */
+.todos-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 14px;
+  flex-wrap: wrap;
+}
+
+.todos-toolbar__search {
+  flex: 1 1 240px;
+}
+
+.todos-toolbar__check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.todos-section--pinned {
+  border-color: rgba(91, 141, 239, 0.45);
+  box-shadow: 0 0 0 1px rgba(91, 141, 239, 0.12);
+}
+
+.todos-section--pinned .todos-section__pin {
+  color: var(--accent);
+}
+
+.todos-section--archived {
+  opacity: 0.7;
+}
+
+.todos-section__pin {
+  background: transparent;
+  border: 0;
+  font: inherit;
+  cursor: pointer;
+  color: var(--muted);
+  padding: 4px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.todos-section__pin:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+}
+
+.todos-section__pin--on {
+  color: var(--accent) !important;
+}
+
+.todos-section__pin--on svg {
+  fill: currentColor;
+}
+
+.todos-section__counts {
+  margin-left: auto;
+  margin-right: 8px;
+  font-size: 12px;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.todos-section__menu-item:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.todos-section__menu-sep {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+
+/* ============================================================
+   Mobile (PWA) — phone-friendly tweaks
+   Most of the desktop layout already collapses gracefully, but the
+   TodosPage is the primary mobile surface so we tighten it further.
+   ============================================================ */
+@media (max-width: 640px) {
+  body {
+    /* honour iOS safe-area when installed as PWA */
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+
+  .page {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .page-head h1 {
+    font-size: 22px;
+  }
+
+  /* Buttons / inputs: ensure 44px tap targets on touch screens */
+  .btn,
+  .input,
+  .select,
+  .todos-row__check,
+  .todos-section__toggle,
+  .todos-section__pin,
+  .todos-section__menu-btn {
+    min-height: 40px;
+  }
+
+  /* Toolbar: search above filter on small screens */
+  .todos-toolbar {
+    gap: 8px;
+  }
+  .todos-toolbar__search {
+    width: 100%;
+  }
+
+  /* List section head wraps neatly */
+  .todos-section__head {
+    flex-wrap: wrap;
+    gap: 6px 8px;
+  }
+  .todos-section__title {
+    flex: 1 1 60%;
+    min-width: 0;
+    font-size: 15px;
+  }
+  .todos-section__counts {
+    margin-left: 4px;
+    font-size: 11.5px;
+  }
+
+  /* Row layout becomes single-column with toolbar wrapping under meta */
+  .todos-row__topline {
+    flex-wrap: wrap;
+    gap: 4px 8px;
+  }
+  .todos-row__title,
+  .todos-row__title-input {
+    font-size: 15px;
+  }
+  .todos-row__tag {
+    font-size: 11px;
+  }
+  .todos-row__sub {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+  }
+  .todos-row__toolbar {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .todos-row__date {
+    flex: 1 1 130px;
+    min-width: 120px;
+  }
+  .todos-row__move {
+    flex: 1 1 120px;
+  }
+
+  /* Command palette: full screen on phones */
+  .cmdp {
+    padding-top: 0;
+    align-items: stretch;
+  }
+  .cmdp__panel {
+    width: 100vw;
+    max-height: 100vh;
+    border-radius: 0;
+  }
+
+  /* Sidebar collapses to overlay (existing layout already supports it),
+     but ensure topbar fits and breadcrumbs scroll */
+  .topbar {
+    overflow-x: auto;
+  }
+
+  /* Hide the markdown "Supports markdown — checklists…" hint on tight screens */
+  .md-editor__hint {
+    display: none;
+  }
 }

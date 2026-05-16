@@ -5,6 +5,7 @@ const labels: Record<ItemKind, string> = {
   note: 'Note',
   goal: 'Goal',
   document: 'Document',
+  feedback: 'Feedback',
 };
 
 export function kindLabel(k: ItemKind): string {

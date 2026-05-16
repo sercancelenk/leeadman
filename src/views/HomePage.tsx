@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { IcArrowRight, IcFolder, IcLayoutGrid, IcListTodo, IcSettings, IcUser } from '../components/icons';
+import { IcArrowRight, IcCalendar, IcFolder, IcLayoutGrid, IcListTodo, IcSettings, IcUser } from '../components/icons';
 import { useAccount } from '../AccountContext';
 import { useAppData } from '../AppDataContext';
 import { PATH_TEAMS } from '../lib/routes';
@@ -80,6 +80,17 @@ export function HomePage() {
           </span>
           <span className="home-tile__title">To-dos</span>
           <span className="home-tile__desc">Personal lists, independent from any team.</span>
+          <span className="home-tile__arrow" aria-hidden>
+            <IcArrowRight size={18} />
+          </span>
+        </Link>
+
+        <Link className="home-tile" to="/agenda">
+          <span className="home-tile__ic">
+            <IcCalendar size={22} />
+          </span>
+          <span className="home-tile__title">Agenda</span>
+          <span className="home-tile__desc">Today and the upcoming week across teams and to-dos.</span>
           <span className="home-tile__arrow" aria-hidden>
             <IcArrowRight size={18} />
           </span>

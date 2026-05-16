@@ -1,5 +1,15 @@
 import { NavLink, useMatch } from 'react-router-dom';
-import { IcFolder, IcHome, IcLayoutGrid, IcListTodo, IcSettings, IcTarget, IcUser, IcUsers } from './icons';
+import {
+  IcCalendar,
+  IcFolder,
+  IcHome,
+  IcLayoutGrid,
+  IcListTodo,
+  IcSettings,
+  IcTarget,
+  IcUser,
+  IcUsers,
+} from './icons';
 import { useAppData } from '../AppDataContext';
 import { PATH_HOME, PATH_TEAMS } from '../lib/routes';
 import { teamLeader, teamMe, teamPeople as teamPeopleRoute, teamBase } from '../lib/teamPaths';
@@ -46,6 +56,12 @@ export function AppSidebar({ collapsed }: Props) {
               <IcListTodo size={18} />
             </span>
             {!collapsed ? <span>To-dos</span> : null}
+          </NavLink>
+          <NavLink to="/agenda" className={linkCls} title="Agenda">
+            <span className="app-sidebar__ic">
+              <IcCalendar size={18} />
+            </span>
+            {!collapsed ? <span>Agenda</span> : null}
           </NavLink>
         </div>
 
