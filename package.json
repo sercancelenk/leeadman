@@ -80,9 +80,7 @@
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
-      "notarize": {
-        "teamId": "ME5ER9CA9Q"
-      }
+      "notarize": true
     },
     "dmg": {
       "writeUpdateInfo": true,
