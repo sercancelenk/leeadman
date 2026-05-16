@@ -2002,6 +2002,17 @@ code {
 .todos-add-inline__textarea {
   resize: none;
   line-height: 1.45;
+  min-height: 4.4em;
+  overflow-y: hidden;
+  white-space: pre-wrap;
+  word-break: break-word;
+  width: 100%;
+}
+
+.textarea--task-title {
+  resize: none;
+  line-height: 1.45;
+  min-height: 4.4em;
   overflow-y: hidden;
   white-space: pre-wrap;
   word-break: break-word;

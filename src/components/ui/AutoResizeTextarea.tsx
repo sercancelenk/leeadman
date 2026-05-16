@@ -13,8 +13,14 @@ type Props = {
   maxRows?: number;
   autoFocus?: boolean;
   disabled?: boolean;
-  /** When true (default) plain Enter calls onSubmit; Shift+Enter inserts newline. */
-  submitOnEnter?: boolean;
+  /**
+   * Controls keyboard submit behaviour:
+   *   - 'enter'  → plain Enter submits, Shift+Enter inserts a newline (chat-style),
+   *   - 'mod'    → Enter inserts a newline, Cmd/Ctrl+Enter submits (long-form-style),
+   *   - 'never'  → Enter just inserts a newline, no submit shortcut.
+   * Default is 'mod' because callers usually want a real multi-line surface.
+   */
+  submitMode?: 'enter' | 'mod' | 'never';
   ariaLabel?: string;
 };
 
@@ -39,7 +45,7 @@ export const AutoResizeTextarea = forwardRef<HTMLTextAreaElement, Props>(functio
     maxRows = 8,
     autoFocus,
     disabled,
-    submitOnEnter = true,
+    submitMode = 'mod',
     ariaLabel,
   },
   ref,
@@ -81,7 +87,14 @@ export const AutoResizeTextarea = forwardRef<HTMLTextAreaElement, Props>(functio
           onCancel?.();
           return;
         }
-        if (submitOnEnter && e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        if (e.key !== 'Enter') return;
+
+        if (submitMode === 'enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
+          e.preventDefault();
+          onSubmit?.();
+          return;
+        }
+        if (submitMode === 'mod' && (e.metaKey || e.ctrlKey)) {
           e.preventDefault();
           onSubmit?.();
         }

@@ -178,8 +178,8 @@ function TodoTaskRow({
               className="todos-row__title-input todos-row__title-input--multi"
               value={draftTitle}
               autoFocus
-              minRows={1}
-              maxRows={6}
+              minRows={2}
+              maxRows={8}
               ariaLabel="Edit task"
               onChange={setDraftTitle}
               onSubmit={() => {
@@ -724,11 +724,11 @@ export function TodosPage() {
                   >
                     <AutoResizeTextarea
                       className="todos-add-inline__input todos-add-inline__textarea"
-                      placeholder="Task — Enter to add, Shift+Enter for a new line"
+                      placeholder={'Describe the task — Enter for a new line, ⌘/Ctrl+Enter to add'}
                       value={draft}
                       autoFocus
-                      minRows={1}
-                      maxRows={8}
+                      minRows={3}
+                      maxRows={10}
                       ariaLabel="New task"
                       onChange={(v) => setDraftByGroup((prev) => ({ ...prev, [g.id]: v }))}
                       onSubmit={() => {

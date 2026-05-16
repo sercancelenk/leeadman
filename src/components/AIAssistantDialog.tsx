@@ -188,6 +188,7 @@ export function AIAssistantDialog({ open, onClose, task, onAppendToBody }: Props
                   onChange={setFollowup}
                   minRows={1}
                   maxRows={5}
+                  submitMode="enter"
                   disabled={busy}
                   onSubmit={() => {
                     const text = followup.trim();

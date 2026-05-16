@@ -613,9 +613,9 @@ function KindSection({
             <span>Task</span>
             <AutoResizeTextarea
               className="textarea textarea--task-title"
-              minRows={2}
-              maxRows={8}
-              placeholder="What needs to be done? Shift+Enter for a new line."
+              minRows={3}
+              maxRows={10}
+              placeholder="What needs to be done? Use multiple lines if helpful."
               value={draftTitle}
               onChange={setDraftTitle}
               ariaLabel="Task title"
