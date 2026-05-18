@@ -4381,7 +4381,10 @@ details summary {
 
 .notes-page {
   display: grid;
-  grid-template-columns: 320px 1fr;
+  /* The "minmax(0, ...)" tracks are critical: without them the grid column
+     defaults to "min-content", which expands to fit a long note preview and
+     blows the sidebar out over the editor pane. */
+  grid-template-columns: minmax(0, 320px) minmax(0, 1fr);
   gap: 0;
   min-height: calc(100vh - 120px);
   background: var(--surface);
@@ -4403,6 +4406,10 @@ details summary {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  /* Defensive: belt-and-braces in case the grid template ever loses the
+     minmax(0,...) and a long preview tries to expand the column. */
+  min-width: 0;
+  overflow: hidden;
 }
 
 .notes-page__sidebar-header {
@@ -4442,6 +4449,9 @@ details summary {
 
 .notes-page__list-item {
   width: 100%;
+  /* Include padding inside the 100% so the button never exceeds its grid column. */
+  box-sizing: border-box;
+  min-width: 0;
   text-align: left;
   background: transparent;
   border: none;
@@ -4452,6 +4462,8 @@ details summary {
   flex-direction: column;
   gap: 4px;
   color: inherit;
+  /* Anything that escapes the per-line overflow:hidden gets clipped here too. */
+  overflow: hidden;
 }
 
 .notes-page__list-item:hover {
@@ -4469,9 +4481,19 @@ details summary {
   gap: 6px;
   font-weight: 600;
   font-size: 14px;
+  min-width: 0;
+}
+
+/* The title text itself owns the ellipsis — the flex parent only provides
+   the min-width:0 anchor so the inner span can actually shrink below its
+   natural content size (a flex item defaults to min-content and would
+   otherwise push the sidebar out). */
+.notes-page__list-title > span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .notes-page__pin {
@@ -4485,6 +4507,10 @@ details summary {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  /* As a block child of a flex column, max-width:100% is enforced anyway,
+     but min-width:0 makes the ellipsis actually fire under all browsers. */
+  min-width: 0;
+  max-width: 100%;
 }
 
 .notes-page__list-time {
@@ -4496,6 +4522,10 @@ details summary {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  /* Same min-width:0 dance as the sidebar: keeps a very long note title or
+     code block from expanding the editor column out of its grid track. */
+  min-width: 0;
+  overflow: hidden;
 }
 
 .notes-page__placeholder {

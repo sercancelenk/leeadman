@@ -12,7 +12,7 @@
  * does (main.tsx checks LEEADMAN_PWA flag + presence of `serviceWorker` API).
  */
 
-const CACHE_VERSION = 'v20-notes-intent-aware';
+const CACHE_VERSION = 'v21-notes-sidebar-overflow';
 const CACHE_NAME = `leeadman-${CACHE_VERSION}`;
 
 const APP_SHELL = [
