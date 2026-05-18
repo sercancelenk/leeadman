@@ -188,7 +188,9 @@ export function NotesPage() {
               const body = await decryptBodyWithMaster(key, n.cipher!);
               if (body === null) {
                 setDisableErr(
-                  `Could not decrypt "${n.title || PLACEHOLDER_TITLE}". Aborting — your data is unchanged.`,
+                  `Could not decrypt "${n.title || PLACEHOLDER_TITLE}" with the current passphrase. ` +
+                    `If this is a leftover from an earlier broken attempt, delete that note (the Delete button works even when locked) ` +
+                    `and try "Remove lock" again.`,
                 );
                 return;
               }
@@ -571,7 +573,7 @@ export function NotesPage() {
 
       {unlockOpen ? (
         <NotesDialog
-          title="Unlock notes"
+          title={unlockDialogTitle(pendingIntent)}
           icon={<IcLock size={18} />}
           onClose={() => {
             setUnlockOpen(false);
@@ -581,11 +583,11 @@ export function NotesPage() {
           }}
           footer={
             <button type="button" className="btn btn--primary" onClick={submitUnlock} disabled={busy}>
-              {busy ? 'Checking…' : 'Unlock'}
+              {busy ? 'Checking…' : unlockDialogButton(pendingIntent)}
             </button>
           }
         >
-          <p>Enter your Notes passphrase to view locked notes in this session.</p>
+          <p>{unlockDialogBody(pendingIntent)}</p>
           <label className="field">
             <span>Passphrase</span>
             <input
@@ -658,6 +660,57 @@ export function NotesPage() {
       ) : null}
     </div>
   );
+}
+
+/**
+ * Intent-aware copy for the passphrase prompt. When the workspace already
+ * has a passphrase set, the user needs to enter it ONCE per session before
+ * any encryption / decryption can happen — including locking a brand-new
+ * note. The button they tap to get here ("Lock", "Unlock", "Remove lock",
+ * or simply selecting a locked note) tells us what they're trying to do,
+ * and the dialog should mirror that so they aren't shown "to view locked
+ * notes" copy while they're really just trying to lock the current note.
+ */
+function unlockDialogTitle(intent: PendingIntent | null): string {
+  switch (intent) {
+    case 'lock':
+      return 'Enter Notes passphrase to lock';
+    case 'unlock-selected':
+      return 'Enter Notes passphrase to unlock';
+    case 'disable-locking':
+      return 'Enter Notes passphrase to remove lock';
+    case 'view':
+    default:
+      return 'Unlock notes';
+  }
+}
+
+function unlockDialogBody(intent: PendingIntent | null): string {
+  switch (intent) {
+    case 'lock':
+      return 'This workspace already has a Notes passphrase. Enter it once to encrypt this note (and any other locked notes) for the rest of this session.';
+    case 'unlock-selected':
+      return 'Enter your Notes passphrase to decrypt this note for the rest of this session.';
+    case 'disable-locking':
+      return 'Enter your Notes passphrase. We need to decrypt every locked note before removing the workspace passphrase.';
+    case 'view':
+    default:
+      return 'Enter your Notes passphrase to view locked notes in this session.';
+  }
+}
+
+function unlockDialogButton(intent: PendingIntent | null): string {
+  switch (intent) {
+    case 'lock':
+      return 'Unlock & lock';
+    case 'unlock-selected':
+      return 'Unlock';
+    case 'disable-locking':
+      return 'Unlock & continue';
+    case 'view':
+    default:
+      return 'Unlock';
+  }
 }
 
 /**
