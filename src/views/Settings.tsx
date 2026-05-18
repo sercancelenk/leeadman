@@ -8,6 +8,7 @@ import type { AIProvider, AppData } from '../model';
 import { AI_PROVIDER_OPTIONS } from '../model';
 import { useTheme } from '../ThemeContext';
 import type { CacheBreakdownEntry, CacheStats, DataFileInfo, DataSources, SaveError } from '../vite-env';
+import { CollapsibleCard } from '../components/ui/CollapsibleCard';
 
 export function Settings() {
   const { data, replaceAll } = useAppData();
@@ -48,8 +49,7 @@ export function Settings() {
         <p className="muted">Your data lives on this computer. Export a backup to keep it elsewhere.</p>
       </header>
 
-      <section className="card">
-        <h2 className="card__title">Appearance</h2>
+      <CollapsibleCard id="appearance" title="Appearance">
         <p className="muted small">You can also toggle the theme from the top bar.</p>
         <div className="row">
           <Button
@@ -69,10 +69,9 @@ export function Settings() {
             Light
           </Button>
         </div>
-      </section>
+      </CollapsibleCard>
 
-      <section className="card">
-        <h2 className="card__title">PIN protection</h2>
+      <CollapsibleCard id="pin" title="PIN protection" badge={pinEnabled ? 'Enabled' : 'Disabled'}>
         <p className="muted">
           Adds a quick lock screen when Leeadman starts and when you choose <em>Lock now</em>. Useful when you step away from your desk so a passer-by can't open the app and read 1:1 notes.
         </p>
@@ -154,17 +153,15 @@ export function Settings() {
             </Button>
           </form>
         )}
-      </section>
+      </CollapsibleCard>
 
-      <section className="card">
-        <h2 className="card__title">Application version</h2>
+      <CollapsibleCard id="version" title="Application version" defaultOpen={false} badge={appVersion || '—'}>
         <p>
           Installed version: <strong>{appVersion || '—'}</strong> · Data schema: v{data.version}
         </p>
-      </section>
+      </CollapsibleCard>
 
-      <section className="card">
-        <h2 className="card__title">Auto updates (GitHub Releases)</h2>
+      <CollapsibleCard id="updates" title="Auto updates (GitHub Releases)" defaultOpen={false}>
         <p className="muted">
           When the packaged app launches, it checks GitHub Releases for a newer version. You can also check on demand below — a dialog will guide you through download and restart.
         </p>
@@ -178,18 +175,16 @@ export function Settings() {
             Check for updates
           </Button>
         </div>
-      </section>
+      </CollapsibleCard>
 
       <UpdaterDialog open={updaterOpen} onClose={() => setUpdaterOpen(false)} />
 
-      <section className="card">
-        <h2 className="card__title">Data location (Electron)</h2>
+      <CollapsibleCard id="data-location" title="Data location (Electron)" defaultOpen={false}>
         {path ? <pre className="pre">{path}</pre> : <p className="muted">No Electron data path available; in the browser preview, data lives in localStorage.</p>}
         <p className="muted small">File name pattern: leeadman-data-&lt;userId&gt;.json</p>
-      </section>
+      </CollapsibleCard>
 
-      <section className="card">
-        <h2 className="card__title">Backup</h2>
+      <CollapsibleCard id="backup" title="Backup">
         <div className="row">
           <Button type="button" variant="primary" icon={<IcDownload size={17} />} onClick={exportJson}>
             Export JSON
@@ -219,7 +214,7 @@ export function Settings() {
         <p className="muted small" style={{ marginTop: 8 }}>
           Importing replaces your existing data. Always export a backup first.
         </p>
-      </section>
+      </CollapsibleCard>
 
       <BackupsRecoverySection />
 
@@ -229,13 +224,12 @@ export function Settings() {
 
       <AISettingsSection />
 
-      <section className="card">
-        <h2 className="card__title">Reminders</h2>
+      <CollapsibleCard id="reminders" title="Reminders" defaultOpen={false}>
         <p className="muted">
           The OS will request notification permission. Fill in the &quot;Reminder&quot; field on a task or note; a desktop notification will fire at the scheduled time
           (the same reminder will not repeat — adjusting the time can re-trigger it).
         </p>
-      </section>
+      </CollapsibleCard>
     </div>
   );
 }
@@ -302,36 +296,138 @@ function SyncSection() {
   const [pairUrl, setPairUrl] = useState('');
   const [pairToken, setPairToken] = useState('');
   const [pairBusy, setPairBusy] = useState(false);
-  const [pairMsg, setPairMsg] = useState<string | null>(null);
+  const [pairMsg, setPairMsg] = useState<{ kind: 'ok' | 'error' | 'info'; text: string } | null>(null);
 
-  const sanitizedHost = pairUrl.trim().replace(/\/+$/, '');
+  // Normalise whatever the user typed into a canonical base URL.
+  // Accepts: "192.168.1.5", "192.168.1.5:9787", "http://192.168.1.5",
+  //          "http://192.168.1.5:9787/", "leeadman.local:9787".
+  const sanitizedHost = useMemo(() => normalizeHostUrl(pairUrl), [pairUrl]);
 
-  const pull = async () => {
+  // Detect the dreaded mixed-content scenario: the renderer is loaded over
+  // HTTPS (PWA on github.io) and the user is pointing it at an http:// host.
+  // The browser will silently block the request — we make the failure
+  // diagnosable up front instead.
+  const isMixedContentBlocked = useMemo(() => {
+    if (typeof window === 'undefined') return false;
+    if (window.location.protocol !== 'https:') return false;
+    return !!sanitizedHost && sanitizedHost.startsWith('http://');
+  }, [sanitizedHost]);
+
+  // 12-second timeout for all LAN calls. The user feels the pain when their
+  // phone is on another Wi-Fi network and fetch hangs for 30s.
+  const fetchWithTimeout = (input: string, init: RequestInit, ms = 12_000) => {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), ms);
+    return fetch(input, { ...init, signal: ctrl.signal }).finally(() => clearTimeout(t));
+  };
+
+  const describeError = (
+    label: 'Pull' | 'Push' | 'Test',
+    err: unknown,
+    resp?: Response,
+  ): { kind: 'error'; text: string } => {
+    if (resp && !resp.ok) {
+      switch (resp.status) {
+        case 401:
+          return { kind: 'error', text: `${label} failed: token is incorrect or has been rotated on the host.` };
+        case 503:
+          return { kind: 'error', text: `${label} failed: no signed-in user on the host (open Leeadman there and log in first).` };
+        case 404:
+          return { kind: 'error', text: `${label} failed: host responded but doesn't speak Leeadman sync (404). Double-check the URL/port.` };
+        default:
+          return { kind: 'error', text: `${label} failed (HTTP ${resp.status}).` };
+      }
+    }
+    const msg = err instanceof Error ? err.message : String(err);
+    if ((err as DOMException)?.name === 'AbortError') {
+      return {
+        kind: 'error',
+        text: `${label} timed out. Check that both devices are on the same Wi-Fi and the host server is running.`,
+      };
+    }
+    if (isMixedContentBlocked) {
+      return {
+        kind: 'error',
+        text: `${label} blocked: this page is served over HTTPS but the host is http://. Open the LAN URL the host shows (\"For mobile/PWA on this network\") in your browser and try again.`,
+      };
+    }
+    return { kind: 'error', text: `${label} failed: ${msg}` };
+  };
+
+  const testReach = async () => {
     setPairMsg(null);
-    if (!sanitizedHost || !pairToken.trim()) {
-      setPairMsg('Host URL and token are required.');
+    if (!sanitizedHost) {
+      setPairMsg({ kind: 'error', text: 'Enter a host URL first (e.g. http://192.168.1.5:9787).' });
+      return;
+    }
+    if (isMixedContentBlocked) {
+      setPairMsg({
+        kind: 'error',
+        text:
+          'This page is served over HTTPS. Modern browsers block fetches to plain http:// hosts. Open the LAN URL shown on the host (e.g. http://192.168.1.5:9787/) in your mobile browser — that loads the PWA over HTTP and unlocks pairing.',
+      });
       return;
     }
     setPairBusy(true);
     try {
-      const resp = await fetch(`${sanitizedHost}/v1/snapshot`, {
+      const resp = await fetchWithTimeout(`${sanitizedHost}/v1/ping`, { method: 'GET' }, 8_000);
+      if (!resp.ok) {
+        setPairMsg(describeError('Test', null, resp));
+        return;
+      }
+      const j = await resp.json();
+      if (j?.name !== 'leeadman-sync') {
+        setPairMsg({
+          kind: 'error',
+          text: 'Reachable, but the responder is not a Leeadman sync server. Double-check the URL.',
+        });
+        return;
+      }
+      setPairMsg({
+        kind: 'ok',
+        text: 'Reachable. Try Pull from host — you\'ll get a 503 if no user is signed in on the host yet, or 401 if the token is wrong.',
+      });
+    } catch (err) {
+      setPairMsg(describeError('Test', err));
+    } finally {
+      setPairBusy(false);
+    }
+  };
+
+  const pull = async () => {
+    setPairMsg(null);
+    if (!sanitizedHost || !pairToken.trim()) {
+      setPairMsg({ kind: 'error', text: 'Host URL and token are required.' });
+      return;
+    }
+    if (isMixedContentBlocked) {
+      setPairMsg({
+        kind: 'error',
+        text:
+          'This page is HTTPS. Open the LAN URL the host displays (e.g. http://192.168.1.5:9787/) in your mobile browser and pair from there.',
+      });
+      return;
+    }
+    setPairBusy(true);
+    try {
+      const resp = await fetchWithTimeout(`${sanitizedHost}/v1/snapshot`, {
         method: 'GET',
         headers: { Authorization: `Bearer ${pairToken.trim()}` },
       });
       if (!resp.ok) {
-        setPairMsg(`Pull failed (${resp.status}).`);
+        setPairMsg(describeError('Pull', null, resp));
         return;
       }
       const json = await resp.json();
       const remote = json?.data;
       if (!remote || typeof remote !== 'object') {
-        setPairMsg('Host returned no data.');
+        setPairMsg({ kind: 'error', text: 'Host returned no data.' });
         return;
       }
       replaceAll(remote);
-      setPairMsg('Pulled snapshot from host. Local data was replaced.');
+      setPairMsg({ kind: 'ok', text: 'Pulled snapshot from host. Local data was replaced.' });
     } catch (err) {
-      setPairMsg(`Pull failed: ${err instanceof Error ? err.message : String(err)}`);
+      setPairMsg(describeError('Pull', err));
     } finally {
       setPairBusy(false);
     }
@@ -340,15 +436,23 @@ function SyncSection() {
   const push = async () => {
     setPairMsg(null);
     if (!sanitizedHost || !pairToken.trim()) {
-      setPairMsg('Host URL and token are required.');
+      setPairMsg({ kind: 'error', text: 'Host URL and token are required.' });
       return;
     }
-    if (!window.confirm('This will overwrite the host\'s data with the data from this device. Continue?')) {
+    if (isMixedContentBlocked) {
+      setPairMsg({
+        kind: 'error',
+        text:
+          'This page is HTTPS. Open the LAN URL the host displays (e.g. http://192.168.1.5:9787/) in your mobile browser and pair from there.',
+      });
+      return;
+    }
+    if (!window.confirm("This will overwrite the host's data with the data from this device. Continue?")) {
       return;
     }
     setPairBusy(true);
     try {
-      const resp = await fetch(`${sanitizedHost}/v1/snapshot`, {
+      const resp = await fetchWithTimeout(`${sanitizedHost}/v1/snapshot`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${pairToken.trim()}`,
@@ -357,12 +461,12 @@ function SyncSection() {
         body: JSON.stringify({ data }),
       });
       if (!resp.ok) {
-        setPairMsg(`Push failed (${resp.status}).`);
+        setPairMsg(describeError('Push', null, resp));
         return;
       }
-      setPairMsg('Pushed local data to the host.');
+      setPairMsg({ kind: 'ok', text: 'Pushed local data to the host.' });
     } catch (err) {
-      setPairMsg(`Push failed: ${err instanceof Error ? err.message : String(err)}`);
+      setPairMsg(describeError('Push', err));
     } finally {
       setPairBusy(false);
     }
@@ -373,8 +477,12 @@ function SyncSection() {
     : [];
 
   return (
-    <section className="card">
-      <h2 className="card__title">Multi-device sync (no cloud)</h2>
+    <CollapsibleCard
+      id="sync"
+      title="Multi-device sync (no cloud)"
+      defaultOpen={false}
+      badge={status?.running ? 'Running' : status?.enabled ? 'Stopped' : undefined}
+    >
       <p className="muted">
         Keep two devices on the same Wi-Fi in sync without any cloud server. The desktop app
         runs a tiny HTTP server protected by a one-time token; another device (a second
@@ -415,12 +523,51 @@ function SyncSection() {
                     <input className="input" readOnly value={status.token} onFocus={(e) => e.currentTarget.select()} />
                   </div>
                   {hostUrls.length > 0 ? (
-                    <div className="field">
-                      <span>Reachable URLs</span>
-                      {hostUrls.map((u) => (
-                        <input key={u} className="input" readOnly value={u} onFocus={(e) => e.currentTarget.select()} />
-                      ))}
-                    </div>
+                    <>
+                      <div className="field">
+                        <span>For mobile or PWA on this network — open this URL in the browser</span>
+                        {hostUrls.map((u) => (
+                          <div className="row" key={`pwa-${u}`} style={{ alignItems: 'stretch', gap: 6 }}>
+                            <input
+                              className="input"
+                              readOnly
+                              value={`${u}/`}
+                              onFocus={(e) => e.currentTarget.select()}
+                              style={{ flex: 1 }}
+                            />
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              onClick={() => {
+                                if (typeof navigator !== 'undefined' && navigator.clipboard) {
+                                  void navigator.clipboard.writeText(`${u}/`);
+                                }
+                              }}
+                              title="Copy"
+                            >
+                              Copy
+                            </Button>
+                          </div>
+                        ))}
+                        <p className="muted small" style={{ marginTop: 6 }}>
+                          The PWA is also bundled on this port — opening these from the mobile browser loads it over
+                          HTTP from this device, sidestepping the HTTPS-blocks-HTTP mixed-content rule that breaks
+                          github.io ↔ LAN pairing.
+                        </p>
+                      </div>
+                      <div className="field">
+                        <span>API base (for another desktop Leeadman)</span>
+                        {hostUrls.map((u) => (
+                          <input
+                            key={`api-${u}`}
+                            className="input"
+                            readOnly
+                            value={u}
+                            onFocus={(e) => e.currentTarget.select()}
+                          />
+                        ))}
+                      </div>
+                    </>
                   ) : null}
                 </div>
               ) : null}
@@ -436,6 +583,21 @@ function SyncSection() {
         <p className="muted small" style={{ marginTop: 0 }}>
           Open Settings on the host device, copy the reachable URL and token, then paste them here.
         </p>
+
+        {isMixedContentBlocked ? (
+          <div className="sync-warning" role="alert">
+            <strong>Mixed-content block detected.</strong> This page is served over <code>https://</code> but the host
+            is <code>http://</code>. Browsers refuse to fetch across that boundary — that's exactly the &quot;Pull
+            failed&quot; you'd see otherwise.
+            <p style={{ margin: '8px 0 0' }}>
+              <strong>Fix:</strong> on the host (the desktop running Leeadman), copy the LAN URL it shows under{' '}
+              <em>This device as host → For mobile or PWA on this network</em> (e.g. <code>http://192.168.1.5:9787/</code>)
+              and open <strong>that</strong> URL in your mobile browser. It loads the same Leeadman PWA over plain
+              HTTP from the host, so pairing then just works.
+            </p>
+          </div>
+        ) : null}
+
         <form
           className="profile-form"
           onSubmit={(e: FormEvent) => {
@@ -451,7 +613,15 @@ function SyncSection() {
               placeholder="http://192.168.1.5:9787"
               value={pairUrl}
               onChange={(e) => setPairUrl(e.target.value)}
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
             />
+            {pairUrl && sanitizedHost && sanitizedHost !== pairUrl.trim().replace(/\/+$/, '') ? (
+              <span className="muted small" style={{ marginTop: 4 }}>
+                Will use: <code>{sanitizedHost}</code>
+              </span>
+            ) : null}
           </label>
           <label className="field">
             <span>Token</span>
@@ -461,17 +631,29 @@ function SyncSection() {
               placeholder="Paste pairing token"
               value={pairToken}
               onChange={(e) => setPairToken(e.target.value)}
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
             />
           </label>
-          <div className="row" style={{ justifyContent: 'flex-end', gap: 8 }}>
-            <Button type="button" variant="ghost" onClick={push} disabled={pairBusy}>
+          <div className="row" style={{ justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
+            <Button type="button" variant="ghost" onClick={() => void testReach()} disabled={pairBusy}>
+              Test reachability
+            </Button>
+            <Button type="button" variant="secondary" onClick={push} disabled={pairBusy}>
               Push to host
             </Button>
             <Button type="submit" variant="primary" disabled={pairBusy}>
               {pairBusy ? 'Working…' : 'Pull from host'}
             </Button>
           </div>
-          {pairMsg ? <p className="form-msg form-msg--ok small">{pairMsg}</p> : null}
+          {pairMsg ? (
+            <p
+              className={`form-msg small ${pairMsg.kind === 'ok' ? 'form-msg--ok' : pairMsg.kind === 'error' ? 'form-msg--err' : ''}`}
+            >
+              {pairMsg.text}
+            </p>
+          ) : null}
         </form>
       </div>
 
@@ -501,7 +683,7 @@ function SyncSection() {
           both endpoints.
         </p>
       </details>
-    </section>
+    </CollapsibleCard>
   );
 }
 
@@ -776,10 +958,16 @@ function AISettingsSection() {
   const isDesktop = typeof window !== 'undefined' && !!window.leeadman;
 
   return (
-    <section className="card">
-      <h2 className="card__title">
-        <IcSparkles size={17} /> AI Assistant
-      </h2>
+    <CollapsibleCard
+      id="ai"
+      title={
+        <>
+          <IcSparkles size={17} /> AI Assistant
+        </>
+      }
+      defaultOpen={false}
+      badge={ai?.apiKey ? `Configured · ${ai?.provider ?? ''}` : 'Not configured'}
+    >
       <p className="muted">
         Each task gets an "Ask AI" button when you connect a provider here. The assistant uses your API key to suggest
         next steps for whatever you're working on. We never proxy these requests — they go straight from this device
@@ -927,7 +1115,7 @@ function AISettingsSection() {
           {testStatus.message}
         </pre>
       ) : null}
-    </section>
+    </CollapsibleCard>
   );
 }
 
@@ -967,13 +1155,12 @@ function BackupsRecoverySection() {
 
   if (!isElectron) {
     return (
-      <section className="card">
-        <h2 className="card__title">Backups &amp; recovery</h2>
+      <CollapsibleCard id="backups" title="Backups & recovery" defaultOpen={false}>
         <p className="muted">
           This panel is only available in the desktop app. In the browser preview, your data lives in the browser&apos;s
           local storage and is automatically cleared if you switch browsers or use private mode.
         </p>
-      </section>
+      </CollapsibleCard>
     );
   }
 
@@ -1003,9 +1190,15 @@ function BackupsRecoverySection() {
     await window.leeadman?.openUserDataFolder?.();
   };
 
+  const totalSnapshots = sources?.backups.length ?? 0;
+
   return (
-    <section className="card">
-      <h2 className="card__title">Backups &amp; recovery</h2>
+    <CollapsibleCard
+      id="backups"
+      title="Backups & recovery"
+      defaultOpen={false}
+      badge={sources ? `${totalSnapshots} snapshot${totalSnapshots === 1 ? '' : 's'}` : undefined}
+    >
       <p className="muted small" style={{ marginBottom: 12 }}>
         Leeadman snapshots your data file every time it saves, after every sign-in, and at app launch. If something looks
         wrong (e.g. your data appeared empty after an update), you can restore from any snapshot below — your <em>current</em>
@@ -1108,7 +1301,7 @@ function BackupsRecoverySection() {
       ) : (
         <p className="muted small">Loading…</p>
       )}
-    </section>
+    </CollapsibleCard>
   );
 }
 
@@ -1192,8 +1385,12 @@ function StorageCacheSection() {
   };
 
   return (
-    <section className="card">
-      <h2 className="card__title">Storage &amp; cache</h2>
+    <CollapsibleCard
+      id="storage"
+      title="Storage & cache"
+      defaultOpen={false}
+      badge={stats && stats.ok ? formatBytes(stats.totalBytes) : undefined}
+    >
       <p className="muted small" style={{ marginBottom: 12 }}>
         How much disk Leeadman uses on this device, and a safe way to reclaim space. Your tasks, notes, AI keys and
         backups are <strong>never</strong> touched by the cache buttons below.
@@ -1284,7 +1481,7 @@ function StorageCacheSection() {
       ) : (
         <p className="muted small">Calculating sizes…</p>
       )}
-    </section>
+    </CollapsibleCard>
   );
 }
 
@@ -1390,6 +1587,28 @@ function DataSourceRow({
       )}
     </div>
   );
+}
+
+function normalizeHostUrl(raw: string): string {
+  let s = raw.trim();
+  if (!s) return '';
+  // Strip protocol-relative `//`
+  if (s.startsWith('//')) s = s.slice(2);
+  // Default to http:// for LAN hosts.
+  if (!/^https?:\/\//i.test(s)) s = `http://${s}`;
+  try {
+    const u = new URL(s);
+    // Default the LAN sync port if missing.
+    if (!u.port && (u.protocol === 'http:' || u.protocol === 'https:')) {
+      u.port = '9787';
+    }
+    // Drop trailing slash so we can append `/v1/...` cleanly.
+    let out = u.toString();
+    if (out.endsWith('/')) out = out.slice(0, -1);
+    return out;
+  } catch {
+    return '';
+  }
 }
 
 function formatBytes(bytes: number | undefined) {

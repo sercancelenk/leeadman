@@ -8,6 +8,7 @@ import { TeamLayout } from './components/TeamLayout';
 import { ThemeProvider } from './ThemeContext';
 import { PATH_TEAMS } from './lib/routes';
 import { CommandPalette } from './components/CommandPalette';
+import { NotesUnlockProvider } from './lib/NotesUnlockContext';
 import './app.css';
 
 // Each route lives in its own JS chunk. The Markdown editor and `react-markdown`
@@ -22,6 +23,7 @@ const AgendaPage = lazy(() => import('./views/AgendaPage').then((m) => ({ defaul
 const AnalyticsPage = lazy(() => import('./views/AnalyticsPage').then((m) => ({ default: m.AnalyticsPage })));
 const ProfilePage = lazy(() => import('./views/ProfilePage').then((m) => ({ default: m.ProfilePage })));
 const Settings = lazy(() => import('./views/Settings').then((m) => ({ default: m.Settings })));
+const NotesPage = lazy(() => import('./views/NotesPage').then((m) => ({ default: m.NotesPage })));
 const TeamDashboard = lazy(() => import('./views/TeamDashboard').then((m) => ({ default: m.TeamDashboard })));
 // All four People routes share the same chunk (they import each other) — using
 // individual lazy() calls is fine: Rollup keeps them in one file and Vite
@@ -66,7 +68,9 @@ function ProtectedShell() {
     <AppDataProvider key={user.id}>
       <AuthProvider>
         <AuthGate>
-          <Boot />
+          <NotesUnlockProvider>
+            <Boot />
+          </NotesUnlockProvider>
         </AuthGate>
       </AuthProvider>
     </AppDataProvider>
@@ -138,6 +142,7 @@ function AppRoutes() {
             <Route path={PATH_TEAMS.replace(/^\//, '')} element={<HomeTeams />} />
             <Route path="todos" element={<TodosPage />} />
             <Route path="agenda" element={<AgendaPage />} />
+            <Route path="notes" element={<NotesPage />} />
             <Route path="analytics" element={<AnalyticsPage />} />
             <Route path="profile" element={<ProfilePage />} />
             <Route path="settings" element={<Settings />} />

@@ -12,7 +12,7 @@
  * does (main.tsx checks LEEADMAN_PWA flag + presence of `serviceWorker` API).
  */
 
-const CACHE_VERSION = 'v15-storage-card-lazy-ai';
+const CACHE_VERSION = 'v18-notes-master-key';
 const CACHE_NAME = `leeadman-${CACHE_VERSION}`;
 
 const APP_SHELL = [

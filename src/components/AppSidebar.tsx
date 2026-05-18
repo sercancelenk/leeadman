@@ -7,6 +7,7 @@ import {
   IcLayoutGrid,
   IcListTodo,
   IcSettings,
+  IcStickyNote,
   IcTarget,
   IcUser,
   IcUsers,
@@ -63,6 +64,12 @@ export function AppSidebar({ collapsed }: Props) {
               <IcCalendar size={18} />
             </span>
             {!collapsed ? <span>Agenda</span> : null}
+          </NavLink>
+          <NavLink to="/notes" className={linkCls} title="Notes">
+            <span className="app-sidebar__ic">
+              <IcStickyNote size={18} />
+            </span>
+            {!collapsed ? <span>Notes</span> : null}
           </NavLink>
           <NavLink to="/analytics" className={linkCls} title="Analytics">
             <span className="app-sidebar__ic">

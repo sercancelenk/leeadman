@@ -30,6 +30,36 @@ const fs = require('fs');
 const http = require('http');
 const os = require('os');
 
+// ---------- Dev / prod data isolation ------------------------------------------
+//
+// In production (a packaged DMG) Electron derives `app.getName()` from
+// `productName` ("Leeadman") and `userData` lands in
+//     ~/Library/Application Support/Leeadman/
+// In development (`npm run dev`) it derives the name from `package.json`'s
+// `name` field ("leeadman"). Because macOS APFS is case-insensitive,
+// "Leeadman" and "leeadman" resolve to the SAME directory — which means dev
+// runs would otherwise read and write the user's real, installed-app data.
+// Worse, dev typically writes a newer schema than an older installed build
+// understands, so opening the installed app afterwards would silently strip
+// the new fields on its next save (the exact "data disappeared after
+// upgrading" scenario we've already hardened against).
+//
+// We sidestep the whole class of problem by giving dev mode its own data
+// directory. The decision MUST happen before any of our `app.getPath` calls
+// or Electron will cache the prod path forever.
+const IS_DEV = !!process.env.VITE_DEV_SERVER_URL;
+if (IS_DEV) {
+  app.setName('Leeadman (Dev)');
+  const devUserData = path.join(app.getPath('appData'), 'Leeadman (Dev)');
+  try {
+    fs.mkdirSync(devUserData, { recursive: true });
+  } catch {
+    /* fs.mkdirSync on a path the OS refuses (read-only, permission) is
+       non-recoverable; Electron will surface a clearer error below. */
+  }
+  app.setPath('userData', devUserData);
+}
+
 // ---------- Single instance ----------------------------------------------------
 
 let mainWindow = null;
@@ -386,10 +416,182 @@ function localIPv4Addresses() {
   return out;
 }
 
-function applyCors(res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+// CORS for the /v1/ API. We deliberately do NOT use a wildcard origin: per
+// fetch-spec, "Access-Control-Allow-Origin: *" combined with the
+// Authorization header is rejected by browsers, AND a wildcard would let any
+// website on the public web pivot through the user's browser into the LAN
+// server. We echo the requesting Origin only when it looks like a same-LAN
+// caller (a private IP, localhost, or http://<our-host>:<our-port>). Other
+// origins get no CORS at all, which the browser interprets as opaque /
+// blocked. The PWA-on-host trick (the same Node server serves the PWA bundle)
+// makes Origin and Host match, so the legitimate case still works.
+function applyApiCors(req, res) {
+  const origin = req.headers['origin'];
+  if (origin && isTrustworthyLanOrigin(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  }
+}
+
+function isTrustworthyLanOrigin(origin) {
+  let u;
+  try {
+    u = new URL(origin);
+  } catch {
+    return false;
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+  const h = u.hostname;
+  if (!h) return false;
+  if (h === 'localhost' || h === '127.0.0.1' || h === '[::1]') return true;
+  // RFC1918 private + link-local + carrier-grade-NAT ranges.
+  if (/^10\./.test(h)) return true;
+  if (/^192\.168\./.test(h)) return true;
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(h)) return true;
+  if (/^169\.254\./.test(h)) return true;
+  if (/^fe80::/i.test(h)) return true;
+  // mDNS .local hostnames published by Bonjour/Avahi
+  if (/\.local$/i.test(h)) return true;
+  return false;
+}
+
+// Validate the `Host` header to defeat DNS rebinding. A browser that has been
+// tricked into thinking `evil.com:9787` resolves to our LAN IP will still
+// send `Host: evil.com:9787` — we reject anything that isn't a private IP /
+// localhost / .local hostname.
+function isTrustworthyHostHeader(req) {
+  const hostHeader = req.headers['host'];
+  if (!hostHeader) return false;
+  // Strip port; "192.168.1.5:9787" → host "192.168.1.5".
+  const host = hostHeader.split(':')[0];
+  if (host === 'localhost' || host === '127.0.0.1' || host === '[::1]') return true;
+  if (/^10\./.test(host)) return true;
+  if (/^192\.168\./.test(host)) return true;
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(host)) return true;
+  if (/^169\.254\./.test(host)) return true;
+  if (/^fe80::/i.test(host)) return true;
+  if (/\.local$/i.test(host)) return true;
+  return false;
+}
+
+// Constant-time comparison of two Bearer tokens. Plain `===` exits on the
+// first differing byte, leaking the prefix length to a timing-side-channel
+// attacker on the same LAN. `crypto.timingSafeEqual` requires equal-length
+// buffers, so we pad/length-check first.
+function safeEqualToken(received, expected) {
+  if (typeof received !== 'string' || typeof expected !== 'string') return false;
+  const a = Buffer.from(received);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  try {
+    return crypto.timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
+}
+
+// Shape-validate the JSON we accept on POST /v1/snapshot. We DO NOT reject
+// fields we don't recognise (so we don't break forward-compatibility), but
+// we DO require the discriminator fields a legitimate Leeadman client would
+// always send. Anything else is rejected before it touches the data writer.
+function isValidSnapshotPayload(obj) {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return false;
+  if (typeof obj.version !== 'number') return false;
+  if (!Array.isArray(obj.teams)) return false;
+  if (!Array.isArray(obj.people)) return false;
+  if (!Array.isArray(obj.items)) return false;
+  if (!Array.isArray(obj.todoGroups)) return false;
+  if (!Array.isArray(obj.todoItems)) return false;
+  return true;
+}
+
+// ---------- Sync server: PWA static-asset helper -----------------------------
+//
+// We also serve the bundled PWA from the same port so a mobile device on the
+// same Wi-Fi can open `http://<host-ip>:9787/` directly and use the app over
+// plain HTTP. This sidesteps the mixed-content rule that blocks fetches from
+// https://*.github.io to http://<lan-ip>:9787 — a frequent first-time-use
+// failure mode.
+//
+// Security note: only static asset bytes from the bundled `dist/` folder are
+// served. The token-protected `/v1/snapshot` endpoint is the only data path.
+
+const STATIC_DIR = path.join(__dirname, '..', 'dist');
+const MIME_TYPES = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+  '.mjs': 'application/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.ico': 'image/x-icon',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.txt': 'text/plain; charset=utf-8',
+  '.map': 'application/json; charset=utf-8',
+};
+
+function safeJoinUnderStatic(reqPath) {
+  // Strip query, decode, and protect against path-traversal. Anything that
+  // would escape STATIC_DIR returns null so the caller can 404.
+  let rel;
+  try {
+    rel = decodeURIComponent(reqPath.split('?')[0]);
+  } catch {
+    return null;
+  }
+  if (!rel || rel === '/') rel = '/index.html';
+  if (rel.startsWith('/')) rel = rel.slice(1);
+  const abs = path.normalize(path.join(STATIC_DIR, rel));
+  if (!abs.startsWith(STATIC_DIR + path.sep) && abs !== STATIC_DIR) return null;
+  return abs;
+}
+
+function serveStaticAsset(req, res) {
+  // SPA fallback: anything that isn't a known asset returns index.html so the
+  // React router can pick up deep links.
+  const reqPath = (req.url || '/').split('?')[0];
+  let abs = safeJoinUnderStatic(reqPath);
+  if (!abs) {
+    res.statusCode = 400;
+    res.end('bad path');
+    return;
+  }
+  let stat;
+  try {
+    stat = fs.statSync(abs);
+  } catch {
+    stat = null;
+  }
+  if (!stat || !stat.isFile()) {
+    // Fallback to index.html (SPA).
+    abs = path.join(STATIC_DIR, 'index.html');
+    try {
+      stat = fs.statSync(abs);
+    } catch {
+      res.statusCode = 404;
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      res.end('Bundled PWA not found. Run `npm run build:pwa` first.');
+      return;
+    }
+  }
+  const ext = path.extname(abs).toLowerCase();
+  res.statusCode = 200;
+  res.setHeader('Content-Type', MIME_TYPES[ext] || 'application/octet-stream');
+  res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+  // Pipe the file so large assets (vendor-react) stream instead of buffering.
+  const stream = fs.createReadStream(abs);
+  stream.on('error', () => {
+    res.statusCode = 500;
+    res.end();
+  });
+  stream.pipe(res);
 }
 
 function startSyncServer(port = SYNC_DEFAULT_PORT) {
@@ -404,69 +606,148 @@ function startSyncServer(port = SYNC_DEFAULT_PORT) {
       return;
     }
     const server = http.createServer((req, res) => {
-      applyCors(res);
-      if (req.method === 'OPTIONS') {
-        res.statusCode = 204;
-        res.end();
-        return;
-      }
-      const auth = req.headers['authorization'] || '';
-      const expected = `Bearer ${cfg.token}`;
-      if (auth !== expected) {
-        res.statusCode = 401;
-        res.setHeader('Content-Type', 'application/json');
-        res.end(JSON.stringify({ error: 'unauthorised' }));
-        return;
-      }
-      const uid = readSessionUserId();
-      if (!uid) {
-        res.statusCode = 503;
-        res.setHeader('Content-Type', 'application/json');
-        res.end(JSON.stringify({ error: 'no active session on host' }));
+      // Defense in depth #1: DNS-rebinding guard. A browser that has been
+      // tricked into resolving `attacker.com` to our LAN IP will send the
+      // attacker's hostname in `Host:`. Anything that isn't a private IP /
+      // localhost / .local hostname is bounced before we look at the route.
+      if (!isTrustworthyHostHeader(req)) {
+        res.statusCode = 403;
+        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        res.end('Forbidden: invalid host header.');
         return;
       }
 
       const url = new URL(req.url, `http://${req.headers.host}`);
-      if (url.pathname === '/v1/snapshot' && req.method === 'GET') {
-        const data = readUserData(uid);
+      const isApi = url.pathname.startsWith('/v1/');
+
+      // CORS only applies to the /v1/ API. Static assets are GET-only and
+      // don't need CORS at all (the PWA bundle is served same-origin from
+      // here, and any other consumer is non-browser anyway).
+      if (isApi) applyApiCors(req, res);
+
+      if (req.method === 'OPTIONS') {
+        res.statusCode = isApi ? 204 : 405;
+        res.end();
+        return;
+      }
+
+      // Unauthenticated reachability probe. Intentionally minimal so we
+      // don't fingerprint our exact version to anyone who can talk to us.
+      // The token-bearing client gets richer info elsewhere if it wants.
+      if (url.pathname === '/v1/ping' && req.method === 'GET') {
         res.statusCode = 200;
         res.setHeader('Content-Type', 'application/json');
-        res.end(JSON.stringify({ ok: true, ts: new Date().toISOString(), data }));
+        res.end(JSON.stringify({ ok: true, name: 'leeadman-sync' }));
         return;
       }
 
-      if (url.pathname === '/v1/snapshot' && req.method === 'POST') {
-        const chunks = [];
-        let total = 0;
-        req.on('data', (c) => {
-          total += c.length;
-          if (total > 25 * 1024 * 1024) {
-            req.destroy();
-            return;
-          }
-          chunks.push(c);
-        });
-        req.on('end', () => {
-          try {
-            const body = Buffer.concat(chunks).toString('utf8');
-            const parsed = JSON.parse(body);
-            const payload = parsed && typeof parsed === 'object' && parsed.data ? parsed.data : parsed;
-            const writeRes = writeUserData(uid, payload);
-            res.statusCode = writeRes.ok ? 200 : 500;
+      // Token-protected API surface.
+      if (isApi) {
+        const auth = req.headers['authorization'] || '';
+        const prefix = 'Bearer ';
+        const received = auth.startsWith(prefix) ? auth.slice(prefix.length) : '';
+        if (!safeEqualToken(received, cfg.token)) {
+          // Tiny constant-time jitter (~ a few ms) so 401s aren't faster
+          // than 200s by an attacker-measurable margin.
+          setTimeout(() => {
+            res.statusCode = 401;
             res.setHeader('Content-Type', 'application/json');
-            res.end(JSON.stringify(writeRes));
-          } catch (err) {
-            res.statusCode = 400;
-            res.setHeader('Content-Type', 'application/json');
-            res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
-          }
-        });
+            res.end(JSON.stringify({ error: 'unauthorised' }));
+          }, 5);
+          return;
+        }
+        const uid = readSessionUserId();
+        if (!uid) {
+          res.statusCode = 503;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ error: 'no active session on host' }));
+          return;
+        }
+
+        if (url.pathname === '/v1/snapshot' && req.method === 'GET') {
+          const data = readUserData(uid);
+          res.statusCode = 200;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ ok: true, ts: new Date().toISOString(), data }));
+          return;
+        }
+
+        if (url.pathname === '/v1/snapshot' && req.method === 'POST') {
+          const chunks = [];
+          let total = 0;
+          let oversized = false;
+          req.on('data', (c) => {
+            if (oversized) return;
+            total += c.length;
+            if (total > 25 * 1024 * 1024) {
+              // Tell the client EXACTLY why we hung up — without a 413,
+              // browsers just see a connection reset and the user sees a
+              // useless "Pull failed: socket hang up". Once we've written
+              // the response we destroy the request so we stop allocating
+              // memory for further chunks.
+              oversized = true;
+              res.statusCode = 413;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(
+                JSON.stringify({
+                  ok: false,
+                  error: 'payload too large; max 25 MB. Compact your workspace or sync less data per push.',
+                }),
+              );
+              req.destroy();
+              return;
+            }
+            chunks.push(c);
+          });
+          req.on('end', () => {
+            if (oversized) return;
+            try {
+              const body = Buffer.concat(chunks).toString('utf8');
+              const parsed = JSON.parse(body);
+              // Accept both `{ data: AppData }` (what our client sends) and a
+              // bare AppData object (legacy / curl-friendly).
+              const payload = parsed && typeof parsed === 'object' && parsed.data ? parsed.data : parsed;
+              if (!isValidSnapshotPayload(payload)) {
+                res.statusCode = 422;
+                res.setHeader('Content-Type', 'application/json');
+                res.end(
+                  JSON.stringify({
+                    ok: false,
+                    error:
+                      'payload rejected: required AppData fields (version, teams, people, items, todoGroups, todoItems) are missing or have the wrong shape',
+                  }),
+                );
+                return;
+              }
+              const writeRes = writeUserData(uid, payload);
+              res.statusCode = writeRes.ok ? 200 : 500;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify(writeRes));
+            } catch (err) {
+              res.statusCode = 400;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
+            }
+          });
+          return;
+        }
+
+        // Unknown /v1/* path
+        res.statusCode = 404;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ error: 'not found' }));
         return;
       }
 
-      res.statusCode = 404;
-      res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify({ error: 'not found' }));
+      // Everything else: serve the bundled PWA (SPA fallback to index.html).
+      // The PWA only needs GET requests; reject other verbs cleanly.
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        res.statusCode = 405;
+        res.setHeader('Allow', 'GET, HEAD, OPTIONS');
+        res.end();
+        return;
+      }
+      serveStaticAsset(req, res);
     });
 
     server.on('error', (err) => {

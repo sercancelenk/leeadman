@@ -184,6 +184,43 @@ export interface AISettings {
   extractionGuidance?: string;
 }
 
+/**
+ * A free-form personal note (macOS Notes-style). Body is Markdown.
+ *
+ * Locked notes encrypt their body with the workspace master key (see
+ * `NotesLock`). The salt lives ONCE in `NotesLock.saltB64`; each ciphertext
+ * blob carries only the IV + AES-GCM ciphertext+tag so re-encryption on
+ * every keystroke is sub-millisecond.
+ */
+export interface Note {
+  id: string;
+  title: string;
+  /** Plaintext Markdown body. Empty when the note is locked. */
+  body: string;
+  /** True if the note is currently encrypted at rest. */
+  locked: boolean;
+  /** When `locked === true`, the AES-GCM ciphertext + IV (no salt). */
+  cipher?: { ivB64: string; cipherB64: string };
+  /** Pinned notes float to the top of the list. */
+  pinned?: boolean;
+  /** Optional manual sort order; lower number first within the same pinned tier. */
+  sortOrder?: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Workspace-level Notes lock. Present iff the user has set a Notes
+ * passphrase. Contains the PBKDF2 salt for the master key plus a verifier
+ * blob ("decrypt this constant under the derived key — if it succeeds the
+ * passphrase was right").
+ */
+export interface NotesLock {
+  saltB64: string;
+  verifierIvB64: string;
+  verifierCipherB64: string;
+}
+
 export interface AppData {
   version: typeof DATA_VERSION;
   teams: Team[];
@@ -199,6 +236,10 @@ export interface AppData {
   todoItems: TodoItem[];
   /** Optional AI assistant settings (BYO API key). */
   aiSettings?: AISettings;
+  /** Standalone Markdown notes (macOS-Notes-style). Always present (empty array when unused). */
+  notes: Note[];
+  /** Workspace-level lock for notes (verifier blob). Absent until the user enables note locking. */
+  notesLock?: NotesLock;
 }
 
 export function nowIso(): string {
@@ -264,6 +305,7 @@ export function emptyData(): AppData {
     notifiedReminderIds: [],
     lastTeamId: teamId,
     profile: { displayName: 'Me', favoriteTeamIds: [] },
+    notes: [],
     ...defaultTodoBundle(),
   };
 }
@@ -447,6 +489,7 @@ function migrateV1ToV2(o: Record<string, unknown>): AppData {
         items,
         notifiedReminderIds: [...notified].filter((x): x is string => typeof x === 'string'),
         lastTeamId: teamId,
+        notes: [],
         ...defaultTodoBundle(),
       }),
     ),
@@ -595,6 +638,8 @@ export function normalizeData(raw: unknown): AppData {
     todoGroups,
     todoItems,
     aiSettings: parseAISettings(o.aiSettings),
+    notes: parseNotes(o.notes),
+    notesLock: parseNotesLock(o.notesLock),
   };
 
   data = ensureTeamsHaveSelf(data);
@@ -619,6 +664,55 @@ function parseAISettings(raw: unknown): AISettings | undefined {
     typeof o.extractionGuidance === 'string' ? o.extractionGuidance : undefined;
   if (!provider && !apiKey && !model && !systemPrompt && !extractionGuidance) return undefined;
   return { provider, apiKey, model, systemPrompt, extractionGuidance };
+}
+
+function parseNotes(raw: unknown): Note[] {
+  if (!Array.isArray(raw)) return [];
+  const out: Note[] = [];
+  for (const n of raw) {
+    if (!n || typeof n !== 'object') continue;
+    const o = n as Record<string, unknown>;
+    if (typeof o.id !== 'string' || !o.id) continue;
+    const locked = !!o.locked;
+    const cipher = locked && o.cipher && typeof o.cipher === 'object'
+      ? (() => {
+          const c = o.cipher as Record<string, unknown>;
+          if (typeof c.ivB64 === 'string' && typeof c.cipherB64 === 'string') {
+            return { ivB64: c.ivB64, cipherB64: c.cipherB64 };
+          }
+          return undefined;
+        })()
+      : undefined;
+    out.push({
+      id: o.id,
+      title: typeof o.title === 'string' ? o.title : '',
+      body: typeof o.body === 'string' && !locked ? o.body : '',
+      locked,
+      cipher,
+      pinned: !!o.pinned,
+      sortOrder: typeof o.sortOrder === 'number' ? o.sortOrder : undefined,
+      createdAt: typeof o.createdAt === 'string' ? o.createdAt : nowIso(),
+      updatedAt: typeof o.updatedAt === 'string' ? o.updatedAt : nowIso(),
+    });
+  }
+  return out;
+}
+
+function parseNotesLock(raw: unknown): NotesLock | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const o = raw as Record<string, unknown>;
+  if (
+    typeof o.saltB64 !== 'string' ||
+    typeof o.verifierIvB64 !== 'string' ||
+    typeof o.verifierCipherB64 !== 'string'
+  ) {
+    return undefined;
+  }
+  return {
+    saltB64: o.saltB64,
+    verifierIvB64: o.verifierIvB64,
+    verifierCipherB64: o.verifierCipherB64,
+  };
 }
 
 function ensureProfile(data: AppData): AppData {

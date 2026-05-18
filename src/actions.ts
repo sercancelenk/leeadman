@@ -6,6 +6,8 @@ import type {
   GoalStatus,
   Item,
   ItemKind,
+  Note,
+  NotesLock,
   Person,
   Priority,
   ReminderRepeat,
@@ -691,4 +693,60 @@ export function toggleTodoItem(data: AppData, id: string): AppData {
 
 export function removeTodoItem(data: AppData, id: string): AppData {
   return { ...data, todoItems: data.todoItems.filter((x) => x.id !== id) };
+}
+
+// -- Notes -----------------------------------------------------------------
+//
+// The reducers here only deal with PLAINTEXT bodies and verifier blobs.
+// Anything that needs to actually encrypt/decrypt happens in the view (where
+// the passphrase is in scope and the result of the Web Crypto promise can be
+// awaited) and is only persisted back through `replaceNote`.
+
+/**
+ * `addNote(data, id)` is intentionally pure: the caller generates the id
+ * outside the reducer so React's `setState(updater)` rule (updaters MUST be
+ * pure and re-runnable) holds, even under StrictMode double-invocation.
+ */
+export function addNote(data: AppData, id: string): AppData {
+  const t = nowIso();
+  const note: Note = {
+    id,
+    title: '',
+    body: '',
+    locked: false,
+    pinned: false,
+    createdAt: t,
+    updatedAt: t,
+  };
+  return { ...data, notes: [note, ...data.notes] };
+}
+
+export function replaceNote(data: AppData, note: Note): AppData {
+  return {
+    ...data,
+    notes: data.notes.map((n) => (n.id === note.id ? { ...note, updatedAt: nowIso() } : n)),
+  };
+}
+
+export function patchNote(
+  data: AppData,
+  id: string,
+  patch: Partial<Pick<Note, 'title' | 'body' | 'pinned'>>,
+): AppData {
+  return {
+    ...data,
+    notes: data.notes.map((n) => (n.id === id ? { ...n, ...patch, updatedAt: nowIso() } : n)),
+  };
+}
+
+export function removeNote(data: AppData, id: string): AppData {
+  return { ...data, notes: data.notes.filter((n) => n.id !== id) };
+}
+
+export function setNotesLock(data: AppData, lock: NotesLock | undefined): AppData {
+  if (!lock) {
+    const { notesLock: _drop, ...rest } = data;
+    return rest as AppData;
+  }
+  return { ...data, notesLock: lock };
 }

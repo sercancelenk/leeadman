@@ -34,7 +34,8 @@ The same React bundle also deploys to GitHub Pages as a **mobile PWA**, so you c
 | **Person Timeline** | Chronological feed of every item attached to a person, grouped by day, filterable by kind. Killer feature for review prep. |
 | **Agenda** | Unified Today / This-week view combining reminders + due tasks + personal to-dos, plus an "Overdue" bucket. |
 | **Analytics** | Local-only dashboard with daily / weekly / monthly / yearly created-vs-completed charts, per-team and per-person scoreboards, plus to-do completion stats. |
-| **LAN sync (no cloud)** | Opt-in tiny HTTP server inside Electron with bearer-token auth and CORS, so a second device on the same Wi-Fi can pull / push a snapshot. |
+| **LAN sync (no cloud)** | Opt-in tiny HTTP server inside Electron with bearer-token auth, **constant-time** token compare, **DNS-rebinding-resistant** Host header validation, **same-LAN-only CORS**, and **payload-shape validation**, so a second device on the same Wi-Fi can pull / push a snapshot — and the host also serves the PWA itself, so an iPhone can open `http://<host-ip>:9787` directly with no mixed-content warning. |
+| **Notes (encrypted at rest)** | macOS-Notes-style two-pane view (sidebar list + Markdown editor, pin to top, soft delete with confirm). Locked notes are encrypted with a **workspace master key** derived once per session via **PBKDF2-SHA-256 (200k iters) → AES-256-GCM** (non-extractable `CryptoKey`); every keystroke re-encrypts in sub-millisecond AES with a fresh IV. The passphrase is never written to disk and never stored as a string after derivation — only a tiny verifier blob is persisted. |
 | **⌘K Command Palette** | Fuzzy search across navigation, teams, people, items and to-dos with keyboard navigation. |
 | **Markdown everywhere** | Notes, scratchpads, item bodies and 1:1 agendas use GitHub-flavored markdown (checklists, tables, code, links). |
 | **Recurring reminders** | Daily / weekly / monthly cadence for any reminder, auto-advances after firing. |
@@ -62,6 +63,7 @@ The same React bundle also deploys to GitHub Pages as a **mobile PWA**, so you c
   - [AI Assistant (BYO API key)](#ai-assistant-byo-api-key)
   - [Backups & recovery](#backups--recovery)
   - [Storage & cache](#storage--cache)
+  - [Notes (encrypted at rest)](#notes-encrypted-at-rest)
   - [Profile & change password](#profile--change-password)
   - [LAN sync (multi-device, no cloud)](#lan-sync-multi-device-no-cloud)
 - [Mobile / PWA](#mobile--pwa)
@@ -296,6 +298,37 @@ The provider-agnostic transport layer lives in [`src/lib/ai.ts`](./src/lib/ai.ts
 
 This panel is purely diagnostic — you can ignore it forever and nothing degrades. The auto-prune logic already keeps backups at 50 slots and Chromium self-manages its caches; the buttons exist so you have the option, not as a maintenance chore.
 
+### Notes (encrypted at rest)
+
+`/notes` is a macOS-Notes-style two-pane view for free-form personal notes that don't belong to a team or a person:
+
+- **Sidebar** — chronological list of all notes, with title + one-line preview + last-edited time. Pinned notes float to the top with a star.
+- **Editor** — a Markdown editor with edit/preview tabs (same renderer as person scratchpads and 1:1 agendas). Title is a plain inline input; the body autosaves on every keystroke through the same debounced writer your tasks use.
+- **Pin / Delete** — pin keeps a note at the top of the list; delete asks for explicit confirmation (locked notes get a louder warning because losing ciphertext is unrecoverable).
+
+**Per-note lock with workspace master key.** Click the lock button on any note and you'll be prompted, once, to set a **Notes passphrase** (≥ 6 chars). From then on:
+
+1. **One-time key derivation.** When you enter the passphrase, Leeadman runs **PBKDF2-SHA-256 (200,000 iterations)** against a workspace salt (stored in `AppData.notesLock`) to derive a **256-bit master AES-GCM key**. The key is created with `extractable: false`, so its raw bytes can't be retrieved even from JavaScript — only `encrypt` and `decrypt` calls work.
+2. **The passphrase string is discarded.** Only the `CryptoKey` lives in renderer memory for the rest of the session. A memory dump won't yield the passphrase. The pending-input fields in the dialog are cleared as soon as derivation succeeds.
+3. **Locking a note** encrypts its body with the cached master key and a **fresh random 12-byte IV per save**. Re-encryption is a single AES-GCM block (sub-millisecond) so we can safely re-encrypt **on every keystroke** while you're editing a locked note — the cipher blob on disk is always current.
+4. **Unlocking a note** decrypts the same way. The unlock dialog checks the **verifier blob** first (it tries to decrypt a known constant `"leeadman-notes-v2"`) — so a wrong passphrase is rejected *before* we touch a real note.
+5. **Out-of-order encrypt protection.** A monotonic generation counter discards any encrypt result whose keystroke has already been superseded, so two near-simultaneous typings can't cause the older text to overwrite the newer ciphertext.
+6. **Session lifetime.** The master key is wiped automatically by logging out, locking the app with PIN, or restarting — the `NotesUnlockProvider` lives below `AuthGate` and unmounts in any of those cases.
+
+**Remove the passphrase.** A *Remove lock* button in the Notes sidebar header opens a confirmation dialog. If accepted, Leeadman decrypts every locked note up-front with the current master key; if any note fails (master key mismatch) it aborts the whole operation and leaves your data untouched. On success it converts every locked note back to plaintext and clears `AppData.notesLock` in one atomic save.
+
+**What's stored where:**
+
+| Thing | Plain on disk? |
+|---|---|
+| Locked note's body | No — only `{ ivB64, cipherB64 }` |
+| Locked note's title, pin, timestamps | Yes (intentional — you can still find notes without unlocking) |
+| Workspace verifier | Yes (`{ saltB64, verifierIvB64, verifierCipherB64 }`, no key material) |
+| Notes passphrase | **Never** |
+| Workspace master key | Renderer memory only, non-extractable, dropped on logout/lock/restart |
+
+> **No reset path on purpose.** Because the passphrase is never written down, anyone who steals your data file (including future-you with backups) cannot derive it. If you forget the passphrase your locked notes are unreadable forever. That's the trade we make for honest at-rest encryption; if you want recoverability instead, just don't lock the note.
+
 ### Profile & change password
 
 `/profile` is a card-first, view-by-default page:
@@ -309,11 +342,40 @@ This panel is purely diagnostic — you can ignore it forever and nothing degrad
 `Settings → Multi-device sync` lets two devices on the same Wi-Fi share a workspace without any cloud service:
 
 - The Electron app runs an optional, opt-in HTTP server (default port `9787`) protected by a **bearer token** stored in `sync.json`.
-- Endpoints: `GET /v1/snapshot` returns the active user's data, `POST /v1/snapshot` replaces it. CORS is permissive so the PWA can call into the desktop.
-- Settings shows the host's reachable LAN URLs, the token (with a Rotate button) and a **Pair with another device** form for the *client* side: paste the URL + token and tap **Pull from host** or **Push to host**.
+- Endpoints:
+  - `GET  /v1/ping` — **unauthenticated** reachability probe; clients hit this to distinguish "host unreachable" from "host reachable but wrong token".
+  - `GET  /v1/snapshot` — returns the active user's data (Bearer token required).
+  - `POST /v1/snapshot` — replaces the active user's data (Bearer token required).
+  - `GET  /*` — serves the **bundled PWA assets** (index.html, JS, CSS, icons) from the host's own `dist/` folder. This is what defeats the "https://github.io → http://lan" mixed-content block, see below.
+- Settings shows the host's reachable LAN URLs, the pairing token (with a Rotate button) and a **Pair with another device** form for the *client* side: paste the URL + token and tap **Pull from host** or **Push to host**.
 - The server auto-resumes on next launch if you previously enabled it.
 
-> **HTTPS PWA caveat:** browsers block plain-HTTP requests from HTTPS pages. To use sync from the GitHub Pages PWA you either need to open it via `http://` on your LAN or run the desktop app on both endpoints. Two desktops, or a desktop + an Android phone over LAN HTTP, both work directly.
+**Mobile / PWA pairing — the mixed-content fix:** browsers block plain-HTTP fetches from HTTPS pages, so calling `http://192.168.1.5:9787` from `https://*.github.io` is silently denied — that's the "Pull failed" you'd otherwise see. Leeadman dodges this by serving the **same PWA bundle** from the sync server. The host UI shows a `http://<lan-ip>:9787/` URL labelled *For mobile or PWA on this network — open this URL in the browser*; opening it on your phone loads the Leeadman PWA over plain HTTP from the host, so the subsequent `fetch('http://.../v1/snapshot')` is **same-origin** and the browser permits it. No more github.io ↔ LAN dead-end.
+
+**Client UX**: the pair form normalises whatever you type (adds `http://`, defaults port `9787`), has a **Test reachability** button that pings `/v1/ping` with an 8-second timeout, and gives targeted error messages — `401` ("token rotated/wrong"), `503` ("no user signed in on the host"), timeout ("check Wi-Fi and that the host server is running") instead of a generic "Pull failed".
+
+#### Sync security — what we did and didn't do
+
+The threat model is "untrusted devices on the same Wi-Fi" and "a malicious public website trying to reach into the user's LAN through their browser". Defenses, in code:
+
+- **Random 192-bit token.** `crypto.randomBytes(24)` per workspace, base64-encoded. Brute-force is not on the table.
+- **Constant-time token compare.** `crypto.timingSafeEqual` instead of `===`, plus a small artificial delay on failure paths so 401 vs 200 cannot be cleanly differentiated by latency measurement.
+- **DNS-rebinding defense.** Every request's `Host:` header is checked against a private-IP / localhost / `.local` allow-list. A browser that's been tricked into thinking `attacker.com` resolves to your LAN IP still sends `Host: attacker.com` — we send back 403 before any route runs.
+- **CORS without wildcards.** `Access-Control-Allow-Origin: *` is never returned. We echo the request `Origin` only when it parses to a private-IP / localhost / `.local` hostname, otherwise no CORS header is set — so a malicious public web origin can't pivot through the user's browser even if it had the token.
+- **Payload shape validation.** `POST /v1/snapshot` rejects bodies that don't have the required `AppData` discriminators (`version`, `teams`, `people`, `items`, `todoGroups`, `todoItems`) with a 422 before writing.
+- **Minimal `/v1/ping`.** Returns `{ ok: true, name: 'leeadman-sync' }` only — no version, no session indicator, no fingerprintable metadata.
+- **Body size cap.** `POST` bodies over 25 MB get an explicit `413 Payload Too Large` response (with a JSON error body) before we keep buffering, instead of a bare socket reset that the client would render as a useless "Pull failed".
+- **Refuse-to-overwrite + auto-backup.** Even if a properly-authenticated client pushes a corrupt-but-shape-valid payload, the writer takes a snapshot before saving and refuses to save an undecipherable file. Worst case: one round-trip to the **Backups & recovery** tab.
+
+#### Why we don't (yet) run HTTPS
+
+Self-signed HTTPS is technically easy (Node `https.createServer` + a generated cert) but **counter-productive** for a LAN tool:
+
+- iOS Safari and Chrome show a *Not secure* warning on every visit; the user habituates to clicking "Proceed anyway", which trains them to ignore the very warning that protects against real attacks.
+- Real CA certificates require a public DNS name and ports 80/443 reachable from the internet — which is exactly what a LAN-only tool is trying to *avoid*.
+- The mixed-content block that motivated HTTPS in the first place is already solved by the host serving its own PWA bundle (see *the mixed-content fix*).
+
+Net: on a trusted home network, HTTP-on-LAN + the hardening above is more honest than HTTPS-with-a-warning-everyone-clicks-through. If your threat model includes an untrusted Wi-Fi network (a coffee shop, a hotel) — don't run the sync server there at all; the toggle is off by default for a reason.
 
 ---
 
@@ -453,7 +515,7 @@ npm install
 
 | Script | What it does |
 |---|---|
-| `npm run dev` | Starts Vite at `http://localhost:5173` and launches Electron pointed at it with hot reload. |
+| `npm run dev` | Starts Vite at `http://localhost:5173` and launches Electron pointed at it with hot reload. Runs in an **isolated `userData` directory** (`~/Library/Application Support/Leeadman (Dev)/` on macOS), so a dev session can never read, write or corrupt the data of the installed app — see [Dev vs installed app data isolation](#dev-vs-installed-app-data-isolation). |
 | `npm run build:web` | Builds the Electron-targeted React bundle (`base: ./`) into `dist/`. |
 | `npm run build:pwa` | Builds the GitHub-Pages-targeted PWA bundle (`base: /leeadman/`) into `dist/`. |
 | `npm run build` | `build:web` + `electron-builder` (local desktop bundle). |
@@ -466,6 +528,45 @@ npm install
 ```bash
 CSC_IDENTITY_AUTO_DISCOVERY=false npm run build
 ```
+
+### Dev vs installed app data isolation
+
+If you've already installed Leeadman from a DMG **and** you want to run the
+local checkout side-by-side to try out new features, the two builds could
+otherwise share the same on-disk data — Electron derives `userData` from
+`app.getName()`, and macOS APFS is case-insensitive, so
+`~/Library/Application Support/Leeadman/` (installed) and
+`~/Library/Application Support/leeadman/` (dev) used to resolve to the same
+directory. Running a dev build on prod data is risky because a dev build
+typically writes a newer on-disk schema than the installed version
+understands, which can silently strip new fields on the next save.
+
+To prevent this, `electron/main.cjs` detects dev mode (the
+`VITE_DEV_SERVER_URL` env var that `npm run dev` sets) and routes everything
+through a separate folder:
+
+| Build | macOS `userData` |
+|---|---|
+| Installed DMG (production) | `~/Library/Application Support/Leeadman/` |
+| `npm run dev` | `~/Library/Application Support/Leeadman (Dev)/` |
+
+Side effects you should know about:
+
+- The dev build starts with **no accounts, no tasks, no notes** — you'll see
+  the same "register an account" screen as a brand-new user.
+- The single-instance lock keys off `app.getName()` too, so the installed
+  app and a dev session can **run at the same time**. They'll appear as two
+  separate apps in the Dock; both windows are functional.
+- Auto-update is already gated by `app.isPackaged`, so the dev session
+  never tries to update itself.
+- To **test on a copy of your real data**, quit the installed app first
+  (it writes on quit), then copy the file you care about:
+  ```bash
+  cp -R "~/Library/Application Support/Leeadman/"* \
+        "~/Library/Application Support/Leeadman (Dev)/"
+  ```
+  This includes accounts, encrypted data files, backups and sync config.
+  The dev session opens the next time you `npm run dev`.
 
 > New to Electron? Have a look at the [**Electron deep dive**](#electron-deep-dive)
 > below — it explains the main / renderer / preload split, the IPC patterns

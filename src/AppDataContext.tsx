@@ -9,8 +9,10 @@ import {
   type ReactNode,
 } from 'react';
 import { useAccount } from './AccountContext';
+import { uuid } from './lib/uuid';
 import {
   addItem as addItemFn,
+  addNote as addNoteFn,
   addPerson as addPersonFn,
   addTeam as addTeamFn,
   addTodoGroup as addTodoGroupFn,
@@ -18,6 +20,8 @@ import {
   clearCompletedInGroup as clearCompletedInGroupFn,
   markAllCompleteInGroup as markAllCompleteInGroupFn,
   moveTodoGroup as moveTodoGroupFn,
+  patchNote as patchNoteFn,
+  removeNote as removeNoteFn,
   reorderTodoGroup as reorderTodoGroupFn,
   reorderTodoItem as reorderTodoItemFn,
   updateTodoGroupPriority as updateTodoGroupPriorityFn,
@@ -26,7 +30,9 @@ import {
   removeTeam as removeTeamFn,
   removeTodoGroup as removeTodoGroupFn,
   removeTodoItem as removeTodoItemFn,
+  replaceNote as replaceNoteFn,
   setLastTeamId as setLastTeamIdFn,
+  setNotesLock as setNotesLockFn,
   toggleFavoriteTeam as toggleFavoriteTeamFn,
   toggleItemDone as toggleItemDoneFn,
   toggleTodoItem as toggleTodoItemFn,
@@ -43,6 +49,8 @@ import type {
   AppData,
   Item,
   ItemKind,
+  Note,
+  NotesLock,
   Person,
   Priority,
   Team,
@@ -125,6 +133,11 @@ type Api = {
   updateTodoGroupPriority: (groupId: string, priority: Priority | undefined) => void;
   toggleTodoItem: (id: string) => void;
   removeTodoItem: (id: string) => void;
+  addNote: () => string;
+  replaceNote: (note: Note) => void;
+  patchNote: (id: string, patch: Partial<Pick<Note, 'title' | 'body' | 'pinned'>>) => void;
+  removeNote: (id: string) => void;
+  setNotesLock: (lock: NotesLock | undefined) => void;
 };
 
 const Ctx = createContext<Api | null>(null);
@@ -327,6 +340,19 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         update((x) => updateTodoGroupPriorityFn(x, groupId, priority)),
       toggleTodoItem: (id) => update((x) => toggleTodoItemFn(x, id)),
       removeTodoItem: (id) => update((x) => removeTodoItemFn(x, id)),
+      // Generate the id BEFORE the updater runs, so the updater itself is
+      // pure (a requirement for React's setState(updater) — StrictMode may
+      // run it twice). The view gets the id back synchronously and selects
+      // the new note without scanning the resulting list.
+      addNote: () => {
+        const id = uuid();
+        update((x) => addNoteFn(x, id));
+        return id;
+      },
+      replaceNote: (note) => update((x) => replaceNoteFn(x, note)),
+      patchNote: (id, patch) => update((x) => patchNoteFn(x, id, patch)),
+      removeNote: (id) => update((x) => removeNoteFn(x, id)),
+      setNotesLock: (lock) => update((x) => setNotesLockFn(x, lock)),
     };
   }, [data, ready, update, replaceAll, reload]);
 

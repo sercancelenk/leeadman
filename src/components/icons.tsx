@@ -377,3 +377,12 @@ export function IcSparkles(p: IconProps) {
   );
 }
 
+export function IcStickyNote(p: IconProps) {
+  const { s, cn, sw, rest } = split(p);
+  return (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden className={cn} {...rest}>
+      <path d="M15 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10l4-4V5a2 2 0 0 0-2-2z" strokeWidth={sw} strokeLinejoin="round" />
+      <path d="M15 21v-4a2 2 0 0 1 2-2h4" strokeWidth={sw} strokeLinejoin="round" />
+    </svg>
+  );
+}
