@@ -13,27 +13,35 @@ import type { Note } from '../model';
 
 const PLACEHOLDER_TITLE = 'New note';
 
-type PendingAction = 'lock' | 'unlock-selected' | 'disable-locking' | 'view' | null;
+type PendingIntent = 'lock' | 'unlock-selected' | 'disable-locking' | 'view';
 
 /**
- * macOS-Notes-style two-pane view. The left rail lists every note (title +
- * one-line preview). The right pane is a Markdown editor for the selected
- * note. Per-note "Lock" stores the body as AES-GCM ciphertext under the
- * workspace master key derived from a passphrase the user types once per
- * session.
+ * macOS-Notes-style two-pane view. Left rail lists every note (title +
+ * preview); right pane is a Markdown editor for the selected note.
  *
- * Implementation notes:
- *   - The unlocked plaintext for the selected note is held in a single
- *     `decrypted` state object keyed by note id; that's what drives the
- *     editor and prevents flicker when our own re-encryption triggers a
- *     re-render of `selected`.
- *   - Keystroke encryption uses the cached workspace CryptoKey (sub-ms,
- *     no PBKDF2). A monotonic `encryptGen` counter discards out-of-order
- *     completions so a slow encrypt doesn't clobber newer text.
- *   - The unlock dialog can be opened in three different "intents"
- *     (lock the selected note, unlock the selected note, disable workspace
- *     locking, or just view it). On a successful passphrase we resume the
- *     original intent automatically.
+ * Lock model: a workspace passphrase derives a non-extractable AES-256-GCM
+ * `CryptoKey` (PBKDF2-SHA-256, 200k iters) once per session. Locked notes
+ * encrypt with that cached key + a fresh IV per save — sub-millisecond, so
+ * re-encryption per keystroke is fine.
+ *
+ * Implementation notes worth keeping in your head when editing this file:
+ *
+ *   - The plaintext body of the selected note lives in the `decrypted`
+ *     state object (keyed by note id). The editor always reads from there;
+ *     the on-disk `selected.body` is only consulted for unlocked notes
+ *     and as the initial seed when we first decrypt.
+ *
+ *   - We never depend on the master key being readable via the
+ *     `NotesUnlockProvider` ref immediately after `remember()` — React
+ *     hasn't re-rendered yet, so `ref.current` is still stale. Instead, the
+ *     setup / unlock submit handlers pass the freshly-derived `CryptoKey`
+ *     directly into `performAction(intent, masterKey)`, which is the
+ *     single source of truth for what "lock", "unlock", "disable locking"
+ *     and "view" mean. This is what fixes the historical bug where
+ *     setting a passphrase and immediately locking a note would derive a
+ *     SECOND key, encrypt the body with the first key but persist the
+ *     second verifier, and then refuse to unlock with the correct
+ *     passphrase.
  */
 export function NotesPage() {
   const { data, addNote, patchNote, replaceNote, removeNote, setNotesLock, update } = useAppData();
@@ -42,12 +50,10 @@ export function NotesPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [setupOpen, setSetupOpen] = useState(false);
   const [unlockOpen, setUnlockOpen] = useState(false);
-  const [pendingAction, setPendingAction] = useState<PendingAction>(null);
+  const [pendingIntent, setPendingIntent] = useState<PendingIntent | null>(null);
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
   const [confirmDisableLock, setConfirmDisableLock] = useState(false);
-  // Local passphrase inputs. Stored in component state only, never written
-  // to disk or to the unlock context (the unlock context holds the derived
-  // CryptoKey, never the string).
+
   const [setupPw1, setSetupPw1] = useState('');
   const [setupPw2, setSetupPw2] = useState('');
   const [unlockPw, setUnlockPw] = useState('');
@@ -56,10 +62,14 @@ export function NotesPage() {
   const [disableErr, setDisableErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  /** Plaintext body of the currently-shown note, keyed by note id so a re-render
-   *  caused by our own debounced save doesn't flicker the editor blank. */
+  /** Plaintext for the currently-displayed note (keyed by id to survive our
+   *  own re-encryption re-renders). */
   const [decrypted, setDecrypted] = useState<{ noteId: string; body: string } | null>(null);
+  /** Monotonic counter that lets a slow encrypt completion drop out if a
+   *  newer keystroke already started a more recent encrypt. */
   const encryptGen = useRef(0);
+
+  // ----- DERIVED ---------------------------------------------------------
 
   const notes = useMemo<Note[]>(() => {
     return [...data.notes].sort((a, b) => {
@@ -78,12 +88,22 @@ export function NotesPage() {
     [notes, selectedId],
   );
 
-  // Decrypt the selected note ONLY when:
-  //   - the selection changed to a different id, OR
-  //   - the master key just became available.
-  // We deliberately don't re-run when `selected` changes due to our own
-  // re-encryption (same id, new cipher) — the editor already holds the
-  // user-typed plaintext in `decrypted`.
+  /** True when the editor has plaintext for the selected note. */
+  const editorReady =
+    !!selected && (!selected.locked || decrypted?.noteId === selected.id);
+
+  const editorBody = !selected
+    ? ''
+    : selected.locked
+      ? decrypted?.noteId === selected.id
+        ? decrypted.body
+        : ''
+      : selected.body;
+
+  // ----- DECRYPT WHEN SELECTION CHANGES ---------------------------------
+
+  // Only decrypts when we don't already hold plaintext for the selected id.
+  // This short-circuits the re-render caused by our own keystroke saves.
   useEffect(() => {
     if (!selected) {
       setDecrypted(null);
@@ -105,20 +125,124 @@ export function NotesPage() {
     };
   }, [selected, unlock.masterKey, decrypted?.noteId]);
 
-  /** True when the editor has plaintext for the selected note (either it's not
-   *  locked, or it is locked but we hold the decrypted body). */
-  const editorReady =
-    !!selected && (!selected.locked || decrypted?.noteId === selected.id);
+  // ----- CORE: perform a pending action with an EXPLICIT key -------------
 
-  const editorBody = !selected
-    ? ''
-    : selected.locked
-      ? decrypted?.noteId === selected.id
-        ? decrypted.body
-        : ''
-      : selected.body;
+  /**
+   * Executes one of the four intents with the supplied master key. Callers
+   * MUST pass the key directly (don't rely on the `NotesUnlockProvider`
+   * ref) when they've just derived it in the same call stack — React state
+   * is still in-flight at that point.
+   */
+  const performAction = useCallback(
+    async (intent: PendingIntent, key: CryptoKey, targetNote: Note | null) => {
+      switch (intent) {
+        case 'view': {
+          // Nothing to do; the decrypt useEffect picks it up on next render.
+          if (targetNote?.locked && targetNote.cipher) {
+            const body = await decryptBodyWithMaster(key, targetNote.cipher);
+            if (body !== null) setDecrypted({ noteId: targetNote.id, body });
+          }
+          return;
+        }
+        case 'lock': {
+          if (!targetNote) return;
+          setBusy(true);
+          try {
+            const bodyToLock = targetNote.locked
+              ? decrypted?.noteId === targetNote.id
+                ? decrypted.body
+                : targetNote.body
+              : targetNote.body;
+            const cipher = await encryptBodyWithMaster(key, bodyToLock);
+            replaceNote({ ...targetNote, body: '', locked: true, cipher });
+          } finally {
+            setBusy(false);
+          }
+          return;
+        }
+        case 'unlock-selected': {
+          if (!targetNote || !targetNote.cipher) return;
+          setBusy(true);
+          try {
+            const body = await decryptBodyWithMaster(key, targetNote.cipher);
+            if (body === null) {
+              setUnlockErr('That passphrase does not unlock this note.');
+              setUnlockOpen(true);
+              setPendingIntent('unlock-selected');
+              return;
+            }
+            replaceNote({ ...targetNote, body, locked: false, cipher: undefined });
+            setDecrypted({ noteId: targetNote.id, body });
+          } finally {
+            setBusy(false);
+          }
+          return;
+        }
+        case 'disable-locking': {
+          setBusy(true);
+          setDisableErr(null);
+          try {
+            const lockedNotes = data.notes.filter((n) => n.locked && n.cipher);
+            const decryptedPairs: { id: string; body: string }[] = [];
+            for (const n of lockedNotes) {
+              const body = await decryptBodyWithMaster(key, n.cipher!);
+              if (body === null) {
+                setDisableErr(
+                  `Could not decrypt "${n.title || PLACEHOLDER_TITLE}". Aborting — your data is unchanged.`,
+                );
+                return;
+              }
+              decryptedPairs.push({ id: n.id, body });
+            }
+            update((d) => {
+              const lookup = new Map(decryptedPairs.map((p) => [p.id, p.body]));
+              const now = new Date().toISOString();
+              const nextNotes = d.notes.map((n) =>
+                lookup.has(n.id)
+                  ? { ...n, body: lookup.get(n.id)!, locked: false, cipher: undefined, updatedAt: now }
+                  : n,
+              );
+              const { notesLock: _drop, ...rest } = d;
+              return { ...(rest as typeof d), notes: nextNotes };
+            });
+            setNotesLock(undefined);
+            unlock.clear();
+            setConfirmDisableLock(false);
+          } finally {
+            setBusy(false);
+          }
+        }
+      }
+    },
+    [data.notes, decrypted, replaceNote, setNotesLock, unlock, update],
+  );
 
-  // ----- CRUD ------------------------------------------------------------
+  // ----- BUTTON HANDLERS ------------------------------------------------
+
+  /** Open the right passphrase dialog for the given intent, or call
+   *  performAction immediately when we already have the key. */
+  const requestAction = useCallback(
+    (intent: PendingIntent) => {
+      const key = unlock.read();
+      if (key) {
+        void performAction(intent, key, selected);
+        return;
+      }
+      if (!data.notesLock) {
+        setSetupErr(null);
+        setSetupPw1('');
+        setSetupPw2('');
+        setPendingIntent(intent);
+        setSetupOpen(true);
+        return;
+      }
+      setUnlockErr(null);
+      setUnlockPw('');
+      setPendingIntent(intent);
+      setUnlockOpen(true);
+    },
+    [unlock, performAction, selected, data.notesLock],
+  );
 
   const onCreate = () => {
     const id = addNote();
@@ -138,16 +262,12 @@ export function NotesPage() {
       patchNote(selected.id, { body: next });
       return;
     }
-    // Locked note: keep the latest text in local state immediately, then
-    // re-encrypt with the cached master key. PBKDF2 doesn't run here — just
-    // a single AES-GCM block — so this is sub-millisecond.
     setDecrypted({ noteId: selected.id, body: next });
     const key = unlock.read();
     if (!key) return;
     const myGen = ++encryptGen.current;
     void (async () => {
       const cipher = await encryptBodyWithMaster(key, next);
-      // Drop completion if a newer keystroke superseded us.
       if (myGen !== encryptGen.current) return;
       replaceNote({ ...selected, body: '', locked: true, cipher });
     })();
@@ -158,145 +278,32 @@ export function NotesPage() {
     patchNote(selected.id, { pinned: !selected.pinned });
   };
 
-  const onDelete = () => {
-    if (!selected) return;
-    setConfirmRemoveId(selected.id);
-  };
-
   const confirmDelete = () => {
     if (!confirmRemoveId) return;
     removeNote(confirmRemoveId);
     setConfirmRemoveId(null);
   };
 
-  // ----- LOCK / UNLOCK ACTIONS ------------------------------------------
+  // ----- AUTO-OPEN UNLOCK DIALOG WHEN A LOCKED NOTE IS SELECTED ----------
 
-  const ensureMasterAvailable = useCallback(
-    (intent: Exclude<PendingAction, null | 'view'>): CryptoKey | null => {
-      const key = unlock.read();
-      if (key) return key;
-      if (!data.notesLock) {
-        setSetupOpen(true);
-        setPendingAction(intent);
-        return null;
-      }
-      setUnlockPw('');
-      setUnlockErr(null);
-      setPendingAction(intent);
-      setUnlockOpen(true);
-      return null;
-    },
-    [unlock, data.notesLock],
-  );
-
-  const lockSelected = useCallback(async () => {
+  // When the selection changes to a locked note and we don't have plaintext
+  // or a master key, open the unlock dialog so the user doesn't have to
+  // click a second button to get to it.
+  useEffect(() => {
     if (!selected) return;
-    const key = ensureMasterAvailable('lock');
-    if (!key) return;
-    setBusy(true);
-    try {
-      // Encrypt whatever the user is currently looking at (plaintext body for
-      // an unlocked note, our local plaintext for a locked-and-decrypted note).
-      const bodyToLock = selected.locked
-        ? decrypted?.noteId === selected.id
-          ? decrypted.body
-          : selected.body
-        : selected.body;
-      const cipher = await encryptBodyWithMaster(key, bodyToLock);
-      replaceNote({ ...selected, body: '', locked: true, cipher });
-    } finally {
-      setBusy(false);
-    }
-  }, [selected, decrypted, ensureMasterAvailable, replaceNote]);
+    if (!selected.locked) return;
+    if (decrypted?.noteId === selected.id) return;
+    if (unlock.read()) return;
+    if (unlockOpen || setupOpen) return;
+    setUnlockPw('');
+    setUnlockErr(null);
+    setPendingIntent('view');
+    setUnlockOpen(true);
+    // intentional: only re-run on selectedId change
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId]);
 
-  const unlockSelected = useCallback(async () => {
-    if (!selected || !selected.cipher) return;
-    const key = ensureMasterAvailable('unlock-selected');
-    if (!key) return;
-    setBusy(true);
-    try {
-      const body = await decryptBodyWithMaster(key, selected.cipher);
-      if (body === null) {
-        // The current master key doesn't match this ciphertext (would happen
-        // if the user changed/regenerated their lock since this note was
-        // last encrypted — shouldn't normally occur with our schema).
-        setUnlockErr('That passphrase does not unlock this note.');
-        setUnlockOpen(true);
-        setPendingAction('unlock-selected');
-        return;
-      }
-      replaceNote({ ...selected, body, locked: false, cipher: undefined });
-      setDecrypted({ noteId: selected.id, body });
-    } finally {
-      setBusy(false);
-    }
-  }, [selected, ensureMasterAvailable, replaceNote]);
-
-  const disableLocking = useCallback(async () => {
-    if (!data.notesLock) return;
-    const key = ensureMasterAvailable('disable-locking');
-    if (!key) return;
-    setBusy(true);
-    setDisableErr(null);
-    try {
-      // Decrypt every locked note up-front so we don't partially clear the
-      // lock state if one fails. If any decrypt returns null, abort the whole
-      // operation and tell the user — that note would otherwise be lost.
-      const lockedNotes = data.notes.filter((n) => n.locked && n.cipher);
-      const decryptedPairs: { id: string; body: string }[] = [];
-      for (const n of lockedNotes) {
-        const body = await decryptBodyWithMaster(key, n.cipher!);
-        if (body === null) {
-          setDisableErr(
-            `Could not decrypt the locked note "${n.title || PLACEHOLDER_TITLE}". Aborting — your data is unchanged.`,
-          );
-          return;
-        }
-        decryptedPairs.push({ id: n.id, body });
-      }
-      // One atomic write that drops the lock AND converts every locked note
-      // back to plaintext. We bypass the per-note dispatchers here because
-      // we need them to land in the same React state update.
-      update((d) => {
-        const lookup = new Map(decryptedPairs.map((p) => [p.id, p.body]));
-        const nextNotes = d.notes.map((n) =>
-          lookup.has(n.id)
-            ? { ...n, body: lookup.get(n.id)!, locked: false, cipher: undefined, updatedAt: new Date().toISOString() }
-            : n,
-        );
-        const { notesLock: _drop, ...rest } = d;
-        return { ...(rest as typeof d), notes: nextNotes };
-      });
-      setNotesLock(undefined);
-      unlock.clear();
-      setConfirmDisableLock(false);
-    } finally {
-      setBusy(false);
-    }
-  }, [data.notes, data.notesLock, ensureMasterAvailable, update, setNotesLock, unlock]);
-
-  // ----- PASSPHRASE DIALOGS ---------------------------------------------
-
-  const resumePending = useCallback(
-    (intent: Exclude<PendingAction, null>) => {
-      switch (intent) {
-        case 'lock':
-          void lockSelected();
-          break;
-        case 'unlock-selected':
-          void unlockSelected();
-          break;
-        case 'disable-locking':
-          setConfirmDisableLock(true);
-          break;
-        case 'view':
-          // No further action — `useEffect` will decrypt the selected note
-          // now that the master key is set.
-          break;
-      }
-    },
-    [lockSelected, unlockSelected],
-  );
+  // ----- DIALOG SUBMIT HANDLERS -----------------------------------------
 
   const submitSetup = async () => {
     setSetupErr(null);
@@ -318,9 +325,12 @@ export function NotesPage() {
       setSetupOpen(false);
       setSetupPw1('');
       setSetupPw2('');
-      const intent = pendingAction;
-      setPendingAction(null);
-      if (intent) resumePending(intent);
+      const intent = pendingIntent;
+      setPendingIntent(null);
+      // CRITICAL: pass the freshly-derived key directly. Reading it back via
+      // `unlock.read()` right now would return null because React hasn't
+      // re-rendered the provider yet.
+      if (intent) await performAction(intent, masterKey, selected);
     } catch (e) {
       setSetupErr(e instanceof Error ? e.message : 'Could not set passphrase.');
     } finally {
@@ -343,33 +353,14 @@ export function NotesPage() {
       unlock.remember(key);
       setUnlockOpen(false);
       setUnlockPw('');
-      const intent = pendingAction;
-      setPendingAction(null);
-      if (intent) resumePending(intent);
+      const intent = pendingIntent;
+      setPendingIntent(null);
+      // Same reason as in submitSetup: hand the freshly-derived key through.
+      if (intent) await performAction(intent, key, selected);
     } finally {
       setBusy(false);
     }
   };
-
-  // Tap on a locked note in the sidebar → open the unlock dialog so we can
-  // read it. Without this the user has to click "Unlock" inside the main
-  // pane, which is a redundant extra step.
-  useEffect(() => {
-    if (!selected) return;
-    if (!selected.locked) return;
-    if (decrypted?.noteId === selected.id) return;
-    if (unlock.read()) return;
-    if (unlockOpen || setupOpen) return;
-    // Don't auto-open the dialog if the user explicitly closed it; we re-arm
-    // only when the selection changes. We track this implicitly via the
-    // dependency list: when `selectedId` changes, we get exactly one chance
-    // to open the dialog.
-    setUnlockPw('');
-    setUnlockErr(null);
-    setPendingAction('view');
-    setUnlockOpen(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId]);
 
   // ----- RENDER ----------------------------------------------------------
 
@@ -460,15 +451,32 @@ export function NotesPage() {
                   <IcStar size={14} />
                 </button>
                 {selected.locked ? (
-                  <button type="button" className="btn btn--sm" onClick={unlockSelected} disabled={busy} title="Unlock note">
+                  <button
+                    type="button"
+                    className="btn btn--sm"
+                    onClick={() => requestAction('unlock-selected')}
+                    disabled={busy}
+                    title="Unlock note"
+                  >
                     <IcLock size={14} /> Unlock
                   </button>
                 ) : (
-                  <button type="button" className="btn btn--sm" onClick={lockSelected} disabled={busy} title="Lock note">
+                  <button
+                    type="button"
+                    className="btn btn--sm"
+                    onClick={() => requestAction('lock')}
+                    disabled={busy}
+                    title="Lock note"
+                  >
                     <IcLock size={14} /> Lock
                   </button>
                 )}
-                <button type="button" className="btn btn--sm btn--danger" onClick={onDelete} title="Delete note">
+                <button
+                  type="button"
+                  className="btn btn--sm btn--danger"
+                  onClick={() => setConfirmRemoveId(selected.id)}
+                  title="Delete note"
+                >
                   <IcTrash size={14} />
                 </button>
               </div>
@@ -483,7 +491,11 @@ export function NotesPage() {
                 ) : (
                   <>
                     <p>Unlock it to read or edit. The body is encrypted at rest with your Notes passphrase.</p>
-                    <button type="button" className="btn btn--primary" onClick={unlockSelected}>
+                    <button
+                      type="button"
+                      className="btn btn--primary"
+                      onClick={() => requestAction('unlock-selected')}
+                    >
                       Unlock note
                     </button>
                   </>
@@ -504,180 +516,185 @@ export function NotesPage() {
       </section>
 
       {setupOpen ? (
-        <div className="ai-dialog" role="dialog" aria-modal="true" aria-labelledby="notes-setup-title">
-          <div className="ai-dialog__panel">
-            <header className="ai-dialog__header">
-              <h2 id="notes-setup-title">
-                <IcLock size={18} /> Set a Notes passphrase
-              </h2>
-              <button
-                type="button"
-                className="btn btn--ghost btn--sm"
-                onClick={() => {
-                  setSetupOpen(false);
-                  setPendingAction(null);
-                  setSetupPw1('');
-                  setSetupPw2('');
-                  setSetupErr(null);
-                }}
-              >
-                Cancel
-              </button>
-            </header>
-            <div className="ai-dialog__body">
-              <p>
-                This passphrase is required to lock and unlock notes. It's <strong>different from your account
-                password</strong> and is <strong>never stored on disk</strong> — only a verifier blob is saved, used to
-                check whether the passphrase you type later is correct.
-              </p>
-              <p className="text-warn">
-                If you forget this passphrase, locked notes <strong>cannot be recovered</strong>. There is no reset
-                path on purpose — that's the whole point of at-rest encryption.
-              </p>
-              <label className="field">
-                <span>Passphrase</span>
-                <input
-                  type="password"
-                  value={setupPw1}
-                  onChange={(e) => setSetupPw1(e.target.value)}
-                  autoFocus
-                  autoComplete="new-password"
-                />
-              </label>
-              <label className="field">
-                <span>Confirm passphrase</span>
-                <input
-                  type="password"
-                  value={setupPw2}
-                  onChange={(e) => setSetupPw2(e.target.value)}
-                  autoComplete="new-password"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') void submitSetup();
-                  }}
-                />
-              </label>
-              {setupErr ? <p className="text-error">{setupErr}</p> : null}
-            </div>
-            <footer className="ai-dialog__footer">
-              <button type="button" className="btn btn--primary" onClick={submitSetup} disabled={busy}>
-                {busy ? 'Saving…' : 'Save passphrase'}
-              </button>
-            </footer>
-          </div>
-        </div>
+        <NotesDialog
+          title="Set a Notes passphrase"
+          icon={<IcLock size={18} />}
+          onClose={() => {
+            setSetupOpen(false);
+            setPendingIntent(null);
+            setSetupPw1('');
+            setSetupPw2('');
+            setSetupErr(null);
+          }}
+          footer={
+            <button type="button" className="btn btn--primary" onClick={submitSetup} disabled={busy}>
+              {busy ? 'Saving…' : 'Save passphrase'}
+            </button>
+          }
+        >
+          <p>
+            This passphrase is required to lock and unlock notes. It's <strong>different from your account
+            password</strong> and is <strong>never stored on disk</strong> — only a verifier blob is saved, used to
+            check whether the passphrase you type later is correct.
+          </p>
+          <p className="text-warn">
+            If you forget this passphrase, locked notes <strong>cannot be recovered</strong>. There is no reset path
+            on purpose — that's the whole point of at-rest encryption.
+          </p>
+          <label className="field">
+            <span>Passphrase</span>
+            <input
+              type="password"
+              className="input"
+              value={setupPw1}
+              onChange={(e) => setSetupPw1(e.target.value)}
+              autoFocus
+              autoComplete="new-password"
+            />
+          </label>
+          <label className="field">
+            <span>Confirm passphrase</span>
+            <input
+              type="password"
+              className="input"
+              value={setupPw2}
+              onChange={(e) => setSetupPw2(e.target.value)}
+              autoComplete="new-password"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void submitSetup();
+              }}
+            />
+          </label>
+          {setupErr ? <p className="text-error">{setupErr}</p> : null}
+        </NotesDialog>
       ) : null}
 
       {unlockOpen ? (
-        <div className="ai-dialog" role="dialog" aria-modal="true" aria-labelledby="notes-unlock-title">
-          <div className="ai-dialog__panel">
-            <header className="ai-dialog__header">
-              <h2 id="notes-unlock-title">
-                <IcLock size={18} /> Unlock notes
-              </h2>
-              <button
-                type="button"
-                className="btn btn--ghost btn--sm"
-                onClick={() => {
-                  setUnlockOpen(false);
-                  setPendingAction(null);
-                  setUnlockPw('');
-                  setUnlockErr(null);
-                }}
-              >
-                Cancel
-              </button>
-            </header>
-            <div className="ai-dialog__body">
-              <p>Enter your Notes passphrase to view locked notes in this session.</p>
-              <label className="field">
-                <span>Passphrase</span>
-                <input
-                  type="password"
-                  value={unlockPw}
-                  onChange={(e) => setUnlockPw(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') void submitUnlock();
-                  }}
-                  autoFocus
-                  autoComplete="current-password"
-                />
-              </label>
-              {unlockErr ? <p className="text-error">{unlockErr}</p> : null}
-            </div>
-            <footer className="ai-dialog__footer">
-              <button type="button" className="btn btn--primary" onClick={submitUnlock} disabled={busy}>
-                {busy ? 'Checking…' : 'Unlock'}
-              </button>
-            </footer>
-          </div>
-        </div>
+        <NotesDialog
+          title="Unlock notes"
+          icon={<IcLock size={18} />}
+          onClose={() => {
+            setUnlockOpen(false);
+            setPendingIntent(null);
+            setUnlockPw('');
+            setUnlockErr(null);
+          }}
+          footer={
+            <button type="button" className="btn btn--primary" onClick={submitUnlock} disabled={busy}>
+              {busy ? 'Checking…' : 'Unlock'}
+            </button>
+          }
+        >
+          <p>Enter your Notes passphrase to view locked notes in this session.</p>
+          <label className="field">
+            <span>Passphrase</span>
+            <input
+              type="password"
+              className="input"
+              value={unlockPw}
+              onChange={(e) => setUnlockPw(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void submitUnlock();
+              }}
+              autoFocus
+              autoComplete="current-password"
+            />
+          </label>
+          {unlockErr ? <p className="text-error">{unlockErr}</p> : null}
+        </NotesDialog>
       ) : null}
 
       {confirmRemoveId ? (
-        <div className="ai-dialog" role="dialog" aria-modal="true" aria-labelledby="notes-del-title">
-          <div className="ai-dialog__panel">
-            <header className="ai-dialog__header">
-              <h2 id="notes-del-title">Delete note?</h2>
-              <button type="button" className="btn btn--ghost btn--sm" onClick={() => setConfirmRemoveId(null)}>
-                Cancel
-              </button>
-            </header>
-            <div className="ai-dialog__body">
-              <p>
-                {(() => {
-                  const n = notes.find((x) => x.id === confirmRemoveId);
-                  if (!n) return 'This note will be removed permanently.';
-                  if (n.locked) {
-                    return 'This note is locked. Deleting it removes the ciphertext — once it is gone you can\'t recover it even if you remember the passphrase.';
-                  }
-                  return 'This note will be removed permanently. There is no undo.';
-                })()}
-              </p>
-            </div>
-            <footer className="ai-dialog__footer">
-              <button type="button" className="btn btn--danger" onClick={confirmDelete}>
-                Delete
-              </button>
-            </footer>
-          </div>
-        </div>
+        <NotesDialog
+          title="Delete note?"
+          onClose={() => setConfirmRemoveId(null)}
+          footer={
+            <button type="button" className="btn btn--danger" onClick={confirmDelete}>
+              Delete
+            </button>
+          }
+        >
+          <p>
+            {(() => {
+              const n = notes.find((x) => x.id === confirmRemoveId);
+              if (!n) return 'This note will be removed permanently.';
+              if (n.locked) {
+                return 'This note is locked. Deleting it removes the ciphertext — once it is gone you can\'t recover it even if you remember the passphrase.';
+              }
+              return 'This note will be removed permanently. There is no undo.';
+            })()}
+          </p>
+        </NotesDialog>
       ) : null}
 
       {confirmDisableLock ? (
-        <div className="ai-dialog" role="dialog" aria-modal="true" aria-labelledby="notes-disable-title">
-          <div className="ai-dialog__panel">
-            <header className="ai-dialog__header">
-              <h2 id="notes-disable-title">Remove the Notes passphrase?</h2>
-              <button
-                type="button"
-                className="btn btn--ghost btn--sm"
-                onClick={() => {
-                  setConfirmDisableLock(false);
-                  setDisableErr(null);
-                }}
-              >
-                Cancel
-              </button>
-            </header>
-            <div className="ai-dialog__body">
-              <p>
-                This will decrypt every locked note back to plain text on disk and remove the workspace
-                passphrase. After that, anyone who can open this file can read your notes.
-              </p>
-              <p className="text-warn">
-                We will refuse to proceed if even one locked note fails to decrypt — your data will be left
-                unchanged.
-              </p>
-              {disableErr ? <p className="text-error">{disableErr}</p> : null}
-            </div>
-            <footer className="ai-dialog__footer">
-              <button type="button" className="btn btn--danger" onClick={disableLocking} disabled={busy}>
-                {busy ? 'Decrypting…' : 'Remove passphrase'}
-              </button>
-            </footer>
-          </div>
-        </div>
+        <NotesDialog
+          title="Remove the Notes passphrase?"
+          icon={<IcLock size={18} />}
+          onClose={() => {
+            setConfirmDisableLock(false);
+            setDisableErr(null);
+          }}
+          footer={
+            <button
+              type="button"
+              className="btn btn--danger"
+              onClick={() => requestAction('disable-locking')}
+              disabled={busy}
+            >
+              {busy ? 'Decrypting…' : 'Remove passphrase'}
+            </button>
+          }
+        >
+          <p>
+            This will decrypt every locked note back to plain text on disk and remove the workspace passphrase.
+            After that, anyone who can open this file can read your notes.
+          </p>
+          <p className="text-warn">
+            We will refuse to proceed if even one locked note fails to decrypt — your data will be left unchanged.
+          </p>
+          {disableErr ? <p className="text-error">{disableErr}</p> : null}
+        </NotesDialog>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * Local dialog wrapper that uses the SAME centred-modal markup as
+ * `AIAssistantDialog` (the `.ai-backdrop` overlay + the `.ai-dialog` panel
+ * defined in `app.css`). Previously the Notes screen rolled its own
+ * `.ai-dialog__panel` class which doesn't exist, so the popups rendered
+ * full-bleed with no backdrop.
+ */
+function NotesDialog({
+  title,
+  icon,
+  onClose,
+  footer,
+  children,
+}: {
+  title: string;
+  icon?: React.ReactNode;
+  onClose: () => void;
+  footer: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="ai-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
+      <div className="ai-dialog" onClick={(e) => e.stopPropagation()}>
+        <header className="ai-dialog__header">
+          {icon ? <span className="ai-dialog__icon">{icon}</span> : null}
+          <div className="ai-dialog__titlewrap">
+            <h2 className="ai-dialog__title">{title}</h2>
+          </div>
+          <button type="button" className="ai-dialog__close" onClick={onClose} aria-label="Close">
+            ✕
+          </button>
+        </header>
+        <div className="ai-dialog__scroll">{children}</div>
+        <div className="notes-dialog__footer">{footer}</div>
+      </div>
     </div>
   );
 }

@@ -4556,3 +4556,12 @@ details summary {
   margin: 8px 0 4px;
   color: var(--text);
 }
+
+/* Footer band for NotesDialog (centred-modal style shared with AI dialog). */
+.notes-dialog__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--tp-divider, var(--border));
+}
