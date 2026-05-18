@@ -107,9 +107,12 @@ export function Settings() {
               if (r?.ok) {
                 setNewPin('');
                 setNewPin2('');
+                // refreshSession() only updates the pinEnabled flag (the
+                // current session stays unlocked). The next launch — or an
+                // explicit "Lock now" click — is when the PIN screen appears.
                 await refreshSession();
                 window.alert(
-                  'PIN saved. You will be prompted on next launch. If you ever lose it, you can reset it from the lock screen with your account password.',
+                  'PIN saved. You will stay signed in for this session; the PIN screen appears the next time you launch the app (or if you click "Lock now"). If you ever lose it, you can reset it from the lock screen with your account password.',
                 );
               } else {
                 window.alert(r?.error ?? 'Could not save PIN.');

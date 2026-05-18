@@ -508,6 +508,26 @@ code {
   letter-spacing: 0.04em;
 }
 
+.auth-link--muted {
+  color: var(--tp-muted);
+  margin-left: 12px;
+  font-size: 12px;
+}
+.auth-link--muted:hover { color: var(--text); }
+
+.auth-diag {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(0,0,0,0.18);
+  color: var(--tp-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border: 1px solid var(--tp-divider);
+}
+
 :root[data-theme='light'] {
   color-scheme: light;
   --bg: #e8eaef;

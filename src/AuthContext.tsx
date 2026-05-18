@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type FormEvent,
   type ReactNode,
@@ -17,6 +18,7 @@ export type AuthPhase = 'loading' | 'open' | 'locked';
 type Ctx = {
   phase: AuthPhase;
   pinEnabled: boolean;
+  /** Re-read the on-disk PIN status. Does NOT change phase after the first boot — see comment below. */
   refresh: () => Promise<void>;
   unlockWithPin: (pin: string) => Promise<boolean>;
   lockSession: () => void;
@@ -27,22 +29,38 @@ const SessionCtx = createContext<Ctx | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [phase, setPhase] = useState<AuthPhase>('loading');
   const [pinEnabled, setPinEnabled] = useState(false);
+  // `bootSettled` flips true after the very first authStatus check completes.
+  // Subsequent refresh() calls (e.g. after the user creates/removes a PIN in
+  // Settings) only update the `pinEnabled` flag; they must NEVER toggle
+  // `phase`, because doing so would either re-lock an already-unlocked user
+  // (which is what happened on every Settings re-mount before this fix) or
+  // race with an in-flight unlockWithPin() and drop a successful unlock.
+  const bootSettled = useRef(false);
 
   const refresh = useCallback(async () => {
     const api = window.leeadman;
     if (!api?.authStatus) {
       setPinEnabled(false);
-      setPhase('open');
+      if (!bootSettled.current) {
+        setPhase('open');
+        bootSettled.current = true;
+      }
       return;
     }
     try {
       const s = await api.authStatus();
       const en = !!s?.enabled;
       setPinEnabled(en);
-      setPhase(en ? 'locked' : 'open');
+      if (!bootSettled.current) {
+        setPhase(en ? 'locked' : 'open');
+        bootSettled.current = true;
+      }
     } catch {
       setPinEnabled(false);
-      setPhase('open');
+      if (!bootSettled.current) {
+        setPhase('open');
+        bootSettled.current = true;
+      }
     }
   }, []);
 
@@ -86,6 +104,24 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const [recoveryPwd, setRecoveryPwd] = useState('');
   const [recoveryErr, setRecoveryErr] = useState('');
   const [recoveryBusy, setRecoveryBusy] = useState(false);
+  const [showDiag, setShowDiag] = useState(false);
+  const [diag, setDiag] = useState<string>('');
+
+  const loadDiag = useCallback(async () => {
+    const api = window.leeadman;
+    const lines: string[] = [];
+    try {
+      const s = await api?.authStatus?.();
+      lines.push(`authStatus.enabled: ${s?.enabled ?? '—'}`);
+      const userPath = await api?.userDataPath?.();
+      lines.push(`userDataPath: ${userPath ?? '—'}`);
+      const v = await api?.getAppVersion?.();
+      lines.push(`appVersion: ${v ?? '—'}`);
+    } catch (e) {
+      lines.push(`diag error: ${(e as Error)?.message ?? e}`);
+    }
+    setDiag(lines.join('\n'));
+  }, []);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -154,8 +190,12 @@ export function AuthGate({ children }: { children: ReactNode }) {
                   type="password"
                   inputMode="numeric"
                   autoComplete="off"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
                   placeholder="PIN"
                   value={pin}
+                  autoFocus
                   onChange={(e) => setPin(e.target.value)}
                 />
                 {err ? <p className="auth-err">{err}</p> : null}
@@ -170,6 +210,19 @@ export function AuthGate({ children }: { children: ReactNode }) {
               >
                 Forgot PIN? Reset with account password
               </button>
+              <button
+                type="button"
+                className="auth-link auth-link--muted"
+                onClick={() => {
+                  setShowDiag((v) => !v);
+                  if (!showDiag) void loadDiag();
+                }}
+              >
+                {showDiag ? 'Hide diagnostics' : 'Diagnostics'}
+              </button>
+              {showDiag ? (
+                <pre className="auth-diag" aria-live="polite">{diag || 'Loading…'}</pre>
+              ) : null}
             </>
           ) : (
             <>
