@@ -22,12 +22,20 @@
 //   NotesLock  = { saltB64, verifierIvB64, verifierCipherB64 }
 //   NoteCipher = { ivB64, cipherB64 }
 //
-// Compatibility: this is a fresh feature (no shipped data uses the old
-// per-note-salt layout), so we don't carry a migration path.
+// Verifier compatibility:
+//   New locks created after the Leeadman → Cadence rename use the new
+//   `cadence-notes-v1` verifier (`NOTES_VERIFIER_PLAINTEXT`). Older locks
+//   on disk used `leeadman-notes-v2`. `unlockMaster` accepts EITHER value
+//   so existing locks keep opening; setup always writes the new value.
+
+import { NOTES_VERIFIER_PLAINTEXT, NOTES_VERIFIER_PLAINTEXT_LEGACY } from './appBranding';
 
 const ITER = 200_000;
 const KEY_LEN = 256;
-const VERIFIER_PLAINTEXT = 'leeadman-notes-v2';
+const ACCEPTED_VERIFIERS: ReadonlyArray<string> = [
+  NOTES_VERIFIER_PLAINTEXT,
+  NOTES_VERIFIER_PLAINTEXT_LEGACY,
+];
 
 function toB64(buf: ArrayBuffer | Uint8Array): string {
   const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
@@ -50,6 +58,23 @@ export type NotesLock = {
   verifierIvB64: string;
   /** Base64 ciphertext+tag of VERIFIER_PLAINTEXT under the master key. */
   verifierCipherB64: string;
+  /**
+   * Optional account-password-based recovery envelope. When present, the
+   * Notes passphrase itself has been encrypted with a key derived from the
+   * user's account password. Lets a forgotten-passphrase user recover by
+   * entering their account password instead. See `wrapPassphraseForRecovery`
+   * and `unwrapPassphraseFromRecovery`.
+   */
+  recovery?: PassphraseRecovery;
+};
+
+export type PassphraseRecovery = {
+  /** PBKDF2 salt for deriving the recovery wrap key from the account password. */
+  saltB64: string;
+  /** AES-GCM IV used to encrypt the Notes passphrase. */
+  ivB64: string;
+  /** AES-GCM ciphertext + tag of the Notes passphrase. */
+  cipherB64: string;
 };
 
 export type NoteCipher = {
@@ -93,10 +118,12 @@ export async function createNotesLock(
   const salt = c.getRandomValues(new Uint8Array(16));
   const masterKey = await deriveMasterKey(passphrase, salt);
   const verifierIv = c.getRandomValues(new Uint8Array(12));
+  // New locks always encrypt the current verifier constant. Existing locks
+  // continue to round-trip through `unlockMaster` which accepts both.
   const verifierCipher = await c.subtle.encrypt(
     { name: 'AES-GCM', iv: verifierIv as unknown as BufferSource },
     masterKey,
-    new TextEncoder().encode(VERIFIER_PLAINTEXT) as unknown as BufferSource,
+    new TextEncoder().encode(NOTES_VERIFIER_PLAINTEXT) as unknown as BufferSource,
   );
   return {
     lock: {
@@ -110,7 +137,8 @@ export async function createNotesLock(
 
 /**
  * Try to unlock with `passphrase`. Returns the derived master CryptoKey on
- * success, or null if the verifier doesn't match.
+ * success, or null if the verifier doesn't match either of the accepted
+ * constants (current `cadence-notes-v1` or legacy `leeadman-notes-v2`).
  */
 export async function unlockMaster(passphrase: string, lock: NotesLock): Promise<CryptoKey | null> {
   const c = getCrypto();
@@ -126,7 +154,8 @@ export async function unlockMaster(passphrase: string, lock: NotesLock): Promise
       key,
       fromB64(lock.verifierCipherB64) as unknown as BufferSource,
     );
-    if (new TextDecoder().decode(plain) !== VERIFIER_PLAINTEXT) return null;
+    const decoded = new TextDecoder().decode(plain);
+    if (!ACCEPTED_VERIFIERS.includes(decoded)) return null;
     return key;
   } catch {
     return null;
@@ -155,6 +184,84 @@ export async function decryptBodyWithMaster(
       { name: 'AES-GCM', iv: fromB64(cipher.ivB64) as unknown as BufferSource },
       masterKey,
       fromB64(cipher.cipherB64) as unknown as BufferSource,
+    );
+    return new TextDecoder().decode(plain);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Derive a (non-extractable) AES-256-GCM key from the account password using
+ * the supplied salt. Used to wrap / unwrap the Notes passphrase for the
+ * forgotten-passphrase recovery flow. Same PBKDF2 parameters as the master
+ * key, but with a separate salt so the account-derived key cannot be confused
+ * with the workspace master key.
+ */
+async function deriveRecoveryKey(accountPassword: string, salt: Uint8Array): Promise<CryptoKey> {
+  const c = getCrypto();
+  const baseKey = await c.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(accountPassword) as unknown as BufferSource,
+    'PBKDF2',
+    false,
+    ['deriveKey'],
+  );
+  return c.subtle.deriveKey(
+    { name: 'PBKDF2', salt: salt as unknown as BufferSource, iterations: ITER, hash: 'SHA-256' },
+    baseKey,
+    { name: 'AES-GCM', length: KEY_LEN },
+    false,
+    ['encrypt', 'decrypt'],
+  );
+}
+
+/**
+ * Wrap (encrypt) the Notes passphrase under a key derived from the user's
+ * account password. The resulting envelope can be stored on disk and used
+ * later as a recovery path — see `unwrapPassphraseFromRecovery`.
+ *
+ * Threat model: an attacker who only has the on-disk file still has to brute
+ * force either the Notes passphrase OR the account password (whichever is
+ * weaker). The recovery does not reveal anything stronger than the existing
+ * account password already protected.
+ */
+export async function wrapPassphraseForRecovery(
+  notesPassphrase: string,
+  accountPassword: string,
+): Promise<PassphraseRecovery> {
+  const c = getCrypto();
+  const salt = c.getRandomValues(new Uint8Array(16));
+  const key = await deriveRecoveryKey(accountPassword, salt);
+  const iv = c.getRandomValues(new Uint8Array(12));
+  const cipher = await c.subtle.encrypt(
+    { name: 'AES-GCM', iv: iv as unknown as BufferSource },
+    key,
+    new TextEncoder().encode(notesPassphrase) as unknown as BufferSource,
+  );
+  return { saltB64: toB64(salt), ivB64: toB64(iv), cipherB64: toB64(cipher) };
+}
+
+/**
+ * Decrypt the Notes passphrase using the user's account password. Returns
+ * null when the account password is wrong (AES-GCM tag mismatch).
+ */
+export async function unwrapPassphraseFromRecovery(
+  recovery: PassphraseRecovery,
+  accountPassword: string,
+): Promise<string | null> {
+  const c = getCrypto();
+  let key: CryptoKey;
+  try {
+    key = await deriveRecoveryKey(accountPassword, fromB64(recovery.saltB64));
+  } catch {
+    return null;
+  }
+  try {
+    const plain = await c.subtle.decrypt(
+      { name: 'AES-GCM', iv: fromB64(recovery.ivB64) as unknown as BufferSource },
+      key,
+      fromB64(recovery.cipherB64) as unknown as BufferSource,
     );
     return new TextDecoder().decode(plain);
   } catch {

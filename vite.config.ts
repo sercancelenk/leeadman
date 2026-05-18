@@ -4,20 +4,25 @@ import react from '@vitejs/plugin-react';
 /**
  * Build targets:
  *  - Electron (`file://` runtime): we need relative asset paths (`./`).
- *  - GitHub Pages (`https://user.github.io/leeadman/`): assets must resolve
- *    under the repo sub-path. We set this via the `LEEADMAN_PWA` env var so
- *    the same source tree builds both.
+ *  - GitHub Pages (`https://<user>.github.io/cadence/`): assets must
+ *    resolve under the repo sub-path. We set this via the `CADENCE_PWA`
+ *    env var so the same source tree builds both.
  *
- * Set `LEEADMAN_PWA=1` (and optionally `LEEADMAN_BASE=/leeadman/`) when
- * building the web bundle for Pages. The default keeps Electron working.
+ * Set `CADENCE_PWA=1` (and optionally `CADENCE_BASE=/cadence/`) when
+ * building the web bundle for Pages. We still accept the legacy `LEEADMAN_*`
+ * names for one release cycle so existing CI workflows keep working until
+ * they're updated.
  */
-const isPwa = process.env.LEEADMAN_PWA === '1';
-const base = isPwa ? process.env.LEEADMAN_BASE || '/leeadman/' : './';
+const isPwa = process.env.CADENCE_PWA === '1' || process.env.LEEADMAN_PWA === '1';
+const base = isPwa
+  ? process.env.CADENCE_BASE || process.env.LEEADMAN_BASE || '/cadence/'
+  : './';
 
 export default defineConfig({
   plugins: [react()],
   base,
   define: {
+    'import.meta.env.CADENCE_PWA': JSON.stringify(isPwa ? '1' : ''),
     'import.meta.env.LEEADMAN_PWA': JSON.stringify(isPwa ? '1' : ''),
   },
   server: { port: 5173, strictPort: true },

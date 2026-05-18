@@ -214,11 +214,27 @@ export interface Note {
  * passphrase. Contains the PBKDF2 salt for the master key plus a verifier
  * blob ("decrypt this constant under the derived key — if it succeeds the
  * passphrase was right").
+ *
+ * Optionally also carries a `recovery` envelope: the Notes passphrase
+ * itself, encrypted with a key derived from the user's account password.
+ * Lets a user who forgot their Notes passphrase recover by entering their
+ * account password instead — without ever weakening the at-rest
+ * encryption (an attacker still has to guess the strongest of the two
+ * passwords).
  */
 export interface NotesLock {
   saltB64: string;
   verifierIvB64: string;
   verifierCipherB64: string;
+  /** Optional: passphrase wrapped with account-password-derived key. */
+  recovery?: {
+    /** PBKDF2 salt for deriving the recovery wrap key from the account password. */
+    saltB64: string;
+    /** AES-GCM IV used to encrypt the Notes passphrase. */
+    ivB64: string;
+    /** AES-GCM ciphertext (+ tag) of the Notes passphrase. */
+    cipherB64: string;
+  };
 }
 
 export interface AppData {
@@ -708,10 +724,22 @@ function parseNotesLock(raw: unknown): NotesLock | undefined {
   ) {
     return undefined;
   }
+  let recovery: NotesLock['recovery'] | undefined;
+  if (o.recovery && typeof o.recovery === 'object') {
+    const r = o.recovery as Record<string, unknown>;
+    if (
+      typeof r.saltB64 === 'string' &&
+      typeof r.ivB64 === 'string' &&
+      typeof r.cipherB64 === 'string'
+    ) {
+      recovery = { saltB64: r.saltB64, ivB64: r.ivB64, cipherB64: r.cipherB64 };
+    }
+  }
   return {
     saltB64: o.saltB64,
     verifierIvB64: o.verifierIvB64,
     verifierCipherB64: o.verifierCipherB64,
+    ...(recovery ? { recovery } : {}),
   };
 }
 

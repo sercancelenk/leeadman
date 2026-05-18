@@ -52,7 +52,7 @@ export function isAIConfigured(
   return !!s?.provider && !!s.apiKey;
 }
 
-const DEFAULT_SYSTEM = `You are an embedded coaching assistant inside a personal task manager called Leeadman.
+const DEFAULT_SYSTEM = `You are an embedded coaching assistant inside a personal task manager called Cadence.
 The user will share a single task they are trying to make progress on. Reply with:
 - a 1–2 sentence framing of what the task really needs,
 - 3 to 5 concrete next actions, ordered by leverage,

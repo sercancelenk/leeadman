@@ -1,7 +1,7 @@
-# Electron in Leeadman — a practical guide
+# Electron in Cadence — a practical guide
 
 This document is both a **mini Electron tutorial** and a **walkthrough of how
-Leeadman actually uses it**. Every concept is paired with a real excerpt from
+Cadence actually uses it**. Every concept is paired with a real excerpt from
 this repo, so by the end you'll know enough to confidently extend the desktop
 side of the app — add IPC handlers, harden security, ship native features.
 
@@ -47,7 +47,7 @@ runtimes into one binary:
 - **Node.js** (the main process): owns the lifecycle, talks to the OS, opens
   windows, reads files, listens to notifications, runs servers.
 
-For Leeadman the sales pitch is concrete:
+For Cadence the sales pitch is concrete:
 
 - We need **local files** (no cloud), so we need raw filesystem access — that's
   the Node side.
@@ -136,7 +136,7 @@ function createWindow() {
     height: 760,
     minWidth: 880,
     minHeight: 560,
-    title: 'Leeadman',
+    title: 'Cadence',
     backgroundColor: '#0b0b10',
     show: false,
     webPreferences: {
@@ -226,7 +226,7 @@ Each signed-in user gets their own JSON file under `app.getPath('userData')`:
 
 ```js
 function dataPathForUser(userId) {
-  return path.join(app.getPath('userData'), `leeadman-data-${userId}.json`);
+  return path.join(app.getPath('userData'), `cadence-data-${userId}.json`);
 }
 ```
 
@@ -234,9 +234,9 @@ function dataPathForUser(userId) {
 
 | Platform | Path |
 |---|---|
-| macOS | `~/Library/Application Support/Leeadman/` |
-| Windows | `%APPDATA%/Leeadman/` |
-| Linux | `~/.config/Leeadman/` |
+| macOS | `~/Library/Application Support/Cadence/` |
+| Windows | `%APPDATA%/Cadence/` |
+| Linux | `~/.config/Cadence/` |
 
 The actual write is atomic — write to a `.tmp` and `rename` over the real
 file, so a crash mid-write can never corrupt the user's data:
@@ -258,7 +258,7 @@ right place to expose privileged APIs.
 ```js
 const { contextBridge, ipcRenderer } = require('electron');
 
-contextBridge.exposeInMainWorld('leeadman', {
+contextBridge.exposeInMainWorld('cadence', {
   loadData: () => ipcRenderer.invoke('data:load'),
   saveData: (data) => ipcRenderer.invoke('data:save', data),
   accountLogin: (payload) => ipcRenderer.invoke('account:login', payload),
@@ -268,7 +268,7 @@ contextBridge.exposeInMainWorld('leeadman', {
 });
 ```
 
-After this, the renderer can do `window.leeadman.loadData()` and gets a
+After this, the renderer can do `window.cadence.loadData()` and gets a
 promise back — but **only the methods listed here**. There's no `fs`, no
 `ipcRenderer`, no `process`. That's the whole point of `contextIsolation`.
 
@@ -278,7 +278,7 @@ We give it a TypeScript type so the React side gets autocomplete. See
 ```ts
 declare global {
   interface Window {
-    leeadman?: {
+    cadence?: {
       loadData: () => Promise<unknown>;
       saveData: (data: unknown) => Promise<boolean>;
       accountLogin: (p: { email: string; password: string }) => Promise<{ ok: boolean; user?: AccountUser; error?: string }>;
@@ -293,20 +293,20 @@ Whenever you add a new IPC handler, the workflow is:
 1. Implement `ipcMain.handle('foo:bar', …)` in `electron/main.cjs`.
 2. Expose `fooBar: (p) => ipcRenderer.invoke('foo:bar', p)` in `electron/preload.cjs`.
 3. Add the type signature to `src/vite-env.d.ts`.
-4. Call it from the renderer as `await window.leeadman?.fooBar?.(payload)`.
+4. Call it from the renderer as `await window.cadence?.fooBar?.(payload)`.
 
 ---
 
 ## 5. Renderer process — the React app
 
 The renderer doesn't know it's inside Electron. Its world is plain
-React + DOM. The only "tell" is the `window.leeadman` surface from the
+React + DOM. The only "tell" is the `window.cadence` surface from the
 preload, which we treat as **optional** so the same code can run in three
 environments:
 
 ```ts
 async function persist(userId: string, data: AppData) {
-  const api = window.leeadman;
+  const api = window.cadence;
   if (api?.saveData) {
     await api.saveData(data); // Electron path: encrypted file write
     return;
@@ -497,7 +497,7 @@ ipcMain.handle('app:installUpdate', () => {
 `setImmediate` matters: without it the IPC reply would race against the
 shutdown and the renderer might never see a result.
 
-The renderer subscribes via `window.leeadman.onUpdaterEvent(cb)` (returns an
+The renderer subscribes via `window.cadence.onUpdaterEvent(cb)` (returns an
 unsubscribe), drives a small state machine — `checking → available →
 downloading → downloaded` (or → `not-available` / `error`) — and renders the
 modal in [`src/views/Settings.tsx`](../src/views/Settings.tsx). When a
@@ -515,7 +515,7 @@ for the secret setup; the CI release workflow does the rest.
 ```js
 ipcMain.handle('app:showNotification', (_evt, { title, body } = {}) => {
   if (!Notification.isSupported()) return false;
-  new Notification({ title: title || 'Leeadman', body: body || '' }).show();
+  new Notification({ title: title || 'Cadence', body: body || '' }).show();
   return true;
 });
 ```
@@ -577,18 +577,18 @@ The relevant scripts in `package.json`:
 
 The Electron-targeted build sets `base: './'` in `vite.config.ts` so the
 generated `index.html` uses **relative** asset paths, which is what
-`file://` needs. The PWA-targeted build sets `base: '/leeadman/'` so it
-works under `https://<user>.github.io/leeadman/`.
+`file://` needs. The PWA-targeted build sets `base: '/cadence/'` so it
+works under `https://<user>.github.io/cadence/`.
 
 `electron-builder`'s configuration lives in the same `package.json`
 under the `build` key. Highlights:
 
 ```json
 "build": {
-  "appId": "com.leeadman.app",
-  "productName": "Leeadman",
+  "appId": "com.cadence.app",
+  "productName": "Cadence",
   "files": ["dist/**/*", "electron/**/*", "package.json"],
-  "publish": [{ "provider": "github", "owner": "...", "repo": "leeadman", "releaseType": "release" }],
+  "publish": [{ "provider": "github", "owner": "...", "repo": "cadence", "releaseType": "release" }],
   "mac": {
     "target": [{ "target": "dmg", "arch": ["arm64", "x64"] }, { "target": "zip", "arch": ["arm64", "x64"] }],
     "hardenedRuntime": true,
@@ -625,7 +625,7 @@ ceremony, use:
 
 ```bash
 CSC_IDENTITY_AUTO_DISCOVERY=false npm run build
-open release/Leeadman-<version>-<arch>.dmg
+open release/Cadence-<version>-<arch>.dmg
 ```
 
 This skips signing entirely; macOS will quarantine the result, so once you
@@ -639,8 +639,8 @@ README's troubleshooting section).
 | What | How |
 |---|---|
 | **Renderer crashes** | The React `ErrorBoundary` shows the stack. Or open DevTools (⌘⌥I) for the live console. |
-| **Main-process logs** | They appear in the terminal that launched `npm run dev`. In a packaged app, run `/Applications/Leeadman.app/Contents/MacOS/Leeadman` from a terminal to see them. |
-| **IPC mismatches** | If `window.leeadman.foo` is `undefined` after edit, check (a) is the channel registered with `ipcMain.handle`?, (b) is it exposed in `preload.cjs`?, (c) did you restart Electron (preload doesn't HMR)? |
+| **Main-process logs** | They appear in the terminal that launched `npm run dev`. In a packaged app, run `/Applications/Cadence.app/Contents/MacOS/Cadence` from a terminal to see them. |
+| **IPC mismatches** | If `window.cadence.foo` is `undefined` after edit, check (a) is the channel registered with `ipcMain.handle`?, (b) is it exposed in `preload.cjs`?, (c) did you restart Electron (preload doesn't HMR)? |
 | **CSP violations** | Check the renderer DevTools console — the violation message tells you the directive. Update `onHeadersReceived` if legitimate. |
 | **Auto-update issues** | `electron-updater` logs to the system log on macOS (`Console.app`), look for `[ElectronUpdater]`. Or temporarily wire `autoUpdater.on('error'/'update-available'/'update-downloaded', …)` to a `dialog.showMessageBox`. |
 
@@ -659,7 +659,7 @@ README's troubleshooting section).
    through `app.getPath('userData')` for writable files.
 4. **Calling `ipcRenderer.invoke` from inside the renderer.** It's not
    available — `nodeIntegration: false` enforces this. Always go through
-   `window.leeadman`.
+   `window.cadence`.
 5. **Loading remote assets that violate CSP.** Either widen the directive
    for that origin (after security review) or proxy the asset through a
    local file you ship.
@@ -686,6 +686,6 @@ README's troubleshooting section).
 
 Once you're comfortable with the topics here, a fun next step is to read
 [`electron/main.cjs`](../electron/main.cjs) end-to-end. It's intentionally
-a single file (~1000 lines) so the whole desktop side of Leeadman fits in
+a single file (~1000 lines) so the whole desktop side of Cadence fits in
 one mental scroll — most of what you read above is right there in
 sequence.

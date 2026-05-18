@@ -27,7 +27,7 @@ export function HomePage() {
         <div className="home-page__brand">
           <span className="home-page__logo" aria-hidden />
           <div>
-            <h1 className="home-page__title">Leeadman</h1>
+            <h1 className="home-page__title">Cadence</h1>
             <p className="home-page__tagline">A local-first leadership workspace — teams, personal to-dos and 1:1 follow-ups.</p>
           </div>
         </div>

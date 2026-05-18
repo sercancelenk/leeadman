@@ -1,6 +1,9 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
-contextBridge.exposeInMainWorld('leeadman', {
+// Surface the IPC bridge under the new name (`cadence`). We also expose
+// the legacy `leeadman` alias so any code path we miss during the rename
+// keeps working — TypeScript users should prefer `window.cadence`.
+const api = {
   loadData: () => ipcRenderer.invoke('data:load'),
   loadDataResult: () => ipcRenderer.invoke('data:loadResult'),
   saveData: (data) => ipcRenderer.invoke('data:save', data),
@@ -12,7 +15,7 @@ contextBridge.exposeInMainWorld('leeadman', {
   clearChromiumCache: () => ipcRenderer.invoke('cache:clearChromium'),
   onSaveError: (cb) => {
     const listener = (_evt, payload) => {
-      try { cb(payload); } catch (err) { console.error('[leeadman] save error handler threw', err); }
+      try { cb(payload); } catch (err) { console.error('[cadence] save error handler threw', err); }
     };
     ipcRenderer.on('data:saveError', listener);
     return () => ipcRenderer.removeListener('data:saveError', listener);
@@ -24,7 +27,7 @@ contextBridge.exposeInMainWorld('leeadman', {
   installUpdate: () => ipcRenderer.invoke('app:installUpdate'),
   onUpdaterEvent: (cb) => {
     const listener = (_evt, payload) => {
-      try { cb(payload); } catch (err) { console.error('[leeadman] updater event handler threw', err); }
+      try { cb(payload); } catch (err) { console.error('[cadence] updater event handler threw', err); }
     };
     ipcRenderer.on('updater:event', listener);
     return () => ipcRenderer.removeListener('updater:event', listener);
@@ -40,8 +43,15 @@ contextBridge.exposeInMainWorld('leeadman', {
   accountLogout: () => ipcRenderer.invoke('account:logout'),
   accountHasLegacyData: () => ipcRenderer.invoke('account:hasLegacyData'),
   accountChangePassword: (payload) => ipcRenderer.invoke('account:changePassword', payload),
+  accountVerifyPassword: (payload) => ipcRenderer.invoke('account:verifyPassword', payload),
   syncStatus: () => ipcRenderer.invoke('sync:status'),
   syncEnable: () => ipcRenderer.invoke('sync:enable'),
   syncDisable: () => ipcRenderer.invoke('sync:disable'),
   syncRotateToken: () => ipcRenderer.invoke('sync:rotateToken'),
-});
+};
+
+contextBridge.exposeInMainWorld('cadence', api);
+// Backwards-compatible alias for any code path that hasn't been migrated to
+// `window.cadence` yet. Remove once the renderer no longer touches the
+// legacy name.
+contextBridge.exposeInMainWorld('leeadman', api);

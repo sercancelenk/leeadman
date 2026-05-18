@@ -17,7 +17,7 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    console.error('[leeadman] Unhandled UI error:', error, info);
+    console.error('[cadence] Unhandled UI error:', error, info);
   }
 
   reset = () => this.setState({ error: null });

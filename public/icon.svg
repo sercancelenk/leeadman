@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Leeadman">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Cadence">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0%" stop-color="#5b8def"/>
@@ -9,12 +9,20 @@
       <stop offset="100%" stop-color="#dbe7ff"/>
     </linearGradient>
   </defs>
-  <rect x="0" y="0" width="512" height="512" rx="112" fill="url(#bg)"/>
-  <!-- Stylized "L" with a checkmark anchor at the bottom -->
-  <path d="M152 104 L152 376 L376 376"
+  <!-- Rounded square plate (Apple-style icon canvas). -->
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+
+  <!-- Open "C" arc. Opens to the right with a ~90° gap so the silhouette
+       reads cleanly as the letter Cadence starts with. The same opening
+       also evokes the end of a musical phrase — the bar before the
+       downbeat returns. -->
+  <path d="M 377 186 A 140 140 0 1 0 377 326"
         fill="none" stroke="url(#mark)" stroke-width="56"
-        stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M286 322 L334 370 L406 282"
-        fill="none" stroke="url(#mark)" stroke-width="42"
-        stroke-linecap="round" stroke-linejoin="round" opacity="0.92"/>
+        stroke-linecap="round"/>
+
+  <!-- Beat marker. A single anchored dot inside the C reads as both
+       a stylised pulse / metronome beat and the centre of a turning
+       wheel — the rhythmic heart of the workspace. Sized so it stays
+       visible at 32-pixel favicon scale. -->
+  <circle cx="256" cy="256" r="36" fill="url(#mark)"/>
 </svg>

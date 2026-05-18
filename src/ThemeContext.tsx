@@ -2,7 +2,9 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 
 export type ThemeMode = 'dark' | 'light';
 
-const STORAGE_KEY = 'leeadman-theme';
+import { STORAGE_PREFIX } from './lib/appBranding';
+
+const STORAGE_KEY = `${STORAGE_PREFIX}-theme`;
 
 const Ctx = createContext<{
   theme: ThemeMode;

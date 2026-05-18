@@ -1,5 +1,5 @@
 /**
- * Leeadman — Electron main process.
+ * Cadence — Electron main process.
  *
  * Responsibilities:
  *   - Boot the application window with hardened defaults (contextIsolation, sandbox-friendly).
@@ -9,10 +9,20 @@
  *
  * Security notes:
  *   - `contextIsolation: true` and `nodeIntegration: false` are mandatory; the
- *     renderer only sees the `window.leeadman` surface exposed by preload.
+ *     renderer only sees the `window.cadence` surface exposed by preload.
  *   - We block in-app navigation to any non-dev URL and route external clicks
  *     to the user's default browser via `shell.openExternal`.
  *   - The app installs a strict-ish Content-Security-Policy header at runtime.
+ *
+ * App naming notes:
+ *   - The product was previously called "Leeadman" and shipped with
+ *     userData at `appData/Leeadman/`. To keep upgrading users on their
+ *     existing data we explicitly point `userData` at that legacy folder
+ *     whenever it exists, regardless of the new productName "Cadence".
+ *   - The macOS `appId` (`com.leeadman.app`) is intentionally NOT changed.
+ *     `electron-updater` keys updates by appId, so changing it would make
+ *     every installed user think the new version is a different app and
+ *     they'd never see an update prompt.
  */
 
 const {
@@ -30,34 +40,98 @@ const fs = require('fs');
 const http = require('http');
 const os = require('os');
 
-// ---------- Dev / prod data isolation ------------------------------------------
+// Single source of truth for product-name strings (see also
+// src/lib/appBranding.ts on the renderer side). If you find yourself
+// editing this constant module please update BOTH copies.
+const {
+  APP_NAME,
+  APP_NAME_LEGACY,
+  APP_SLUG,
+  APP_SLUG_LEGACY,
+  LOG_TAG,
+  DATA_FILE_PREFIX,
+  DATA_FILE_PREFIX_LEGACY,
+  SYNC_FINGERPRINT,
+} = require('./branding.cjs');
+
+// ---------- Dev / prod data isolation + one-shot legacy migration --------------
 //
-// In production (a packaged DMG) Electron derives `app.getName()` from
-// `productName` ("Leeadman") and `userData` lands in
-//     ~/Library/Application Support/Leeadman/
-// In development (`npm run dev`) it derives the name from `package.json`'s
-// `name` field ("leeadman"). Because macOS APFS is case-insensitive,
-// "Leeadman" and "leeadman" resolve to the SAME directory — which means dev
-// runs would otherwise read and write the user's real, installed-app data.
-// Worse, dev typically writes a newer schema than an older installed build
-// understands, so opening the installed app afterwards would silently strip
-// the new fields on its next save (the exact "data disappeared after
-// upgrading" scenario we've already hardened against).
+// Production builds keep their data at `~/Library/Application Support/Cadence/`
+// (derived from `app.getName()` which now resolves to "Cadence"). Dev builds
+// (`npm run dev`) use a separate `Cadence (Dev)/` directory so they can never
+// read, write or corrupt the data of the installed app.
 //
-// We sidestep the whole class of problem by giving dev mode its own data
-// directory. The decision MUST happen before any of our `app.getPath` calls
-// or Electron will cache the prod path forever.
+// One-shot rename migration: pre-rename builds wrote everything to
+// `~/Library/Application Support/Leeadman/` (and `Leeadman (Dev)/` for dev).
+// On the FIRST launch after the rename we detect that folder and copy its
+// contents into the new Cadence folder, renaming `leeadman-*.json` files to
+// `cadence-*.json` on the way. We leave the legacy folder in place as a
+// safety net — the user can delete it manually once they're happy.
+//
+// The decision MUST happen before any of our `app.getPath` calls or Electron
+// will cache the resolved path for the rest of the process.
 const IS_DEV = !!process.env.VITE_DEV_SERVER_URL;
-if (IS_DEV) {
-  app.setName('Leeadman (Dev)');
-  const devUserData = path.join(app.getPath('appData'), 'Leeadman (Dev)');
+app.setName(IS_DEV ? `${APP_NAME} (Dev)` : APP_NAME);
+{
+  const appDataDir = app.getPath('appData');
+  const legacyDir = path.join(appDataDir, IS_DEV ? `${APP_NAME_LEGACY} (Dev)` : APP_NAME_LEGACY);
+  const newDir = path.join(appDataDir, IS_DEV ? `${APP_NAME} (Dev)` : APP_NAME);
+
   try {
-    fs.mkdirSync(devUserData, { recursive: true });
+    fs.mkdirSync(newDir, { recursive: true });
   } catch {
-    /* fs.mkdirSync on a path the OS refuses (read-only, permission) is
-       non-recoverable; Electron will surface a clearer error below. */
+    /* fs.mkdirSync on a path the OS refuses is non-recoverable; Electron
+       will surface a clearer error below if userData turns out to be
+       unwritable. */
   }
-  app.setPath('userData', devUserData);
+  app.setPath('userData', newDir);
+
+  // Migration guard: only copy if the LEGACY folder exists AND the NEW folder
+  // doesn't already have a Cadence-prefixed accounts file. The accounts file
+  // is the most-likely-to-exist file in any non-empty workspace, so its
+  // presence is a good "we've already migrated, leave it alone" signal.
+  const newAccountsFile = path.join(newDir, `${DATA_FILE_PREFIX}-accounts.json`);
+  if (fs.existsSync(legacyDir) && !fs.existsSync(newAccountsFile)) {
+    try {
+      migrateLegacyUserData(legacyDir, newDir);
+      console.log(LOG_TAG, 'migrated legacy data from', legacyDir, '->', newDir);
+    } catch (err) {
+      console.warn(LOG_TAG, 'legacy data migration failed (continuing with empty workspace)', err);
+    }
+  }
+}
+
+/**
+ * Recursive copy from a pre-rename `Leeadman/` folder into the new
+ * `Cadence/` folder, renaming any `leeadman-*` filename to `cadence-*`.
+ * Idempotent on a per-file basis (skips files that already exist at the
+ * target) so a partial / interrupted migration can be re-run safely.
+ */
+function migrateLegacyUserData(legacyDir, newDir) {
+  const entries = fs.readdirSync(legacyDir, { withFileTypes: true });
+  for (const entry of entries) {
+    const srcPath = path.join(legacyDir, entry.name);
+    const renamed =
+      entry.name.startsWith(`${DATA_FILE_PREFIX_LEGACY}-`) || entry.name === `${DATA_FILE_PREFIX_LEGACY}-data.json`
+        ? `${DATA_FILE_PREFIX}-${entry.name.slice(DATA_FILE_PREFIX_LEGACY.length + 1)}`
+        : entry.name;
+    const dstPath = path.join(newDir, renamed);
+    if (entry.isDirectory()) {
+      try {
+        fs.mkdirSync(dstPath, { recursive: true });
+      } catch (err) {
+        console.warn(LOG_TAG, 'migrate: mkdir failed for', dstPath, err);
+        continue;
+      }
+      migrateLegacyUserData(srcPath, dstPath);
+    } else if (entry.isFile() && !fs.existsSync(dstPath)) {
+      try {
+        fs.copyFileSync(srcPath, dstPath);
+      } catch (err) {
+        console.warn(LOG_TAG, 'migrate: copy failed for', srcPath, '->', dstPath, err);
+      }
+    }
+  }
 }
 
 // ---------- Single instance ----------------------------------------------------
@@ -79,9 +153,14 @@ app.on('second-instance', () => {
 
 // ---------- Data paths ---------------------------------------------------------
 
-const LEGACY_DATA_FILENAME = 'leeadman-data.json';
-const ACCOUNTS_FILENAME = 'leeadman-accounts.json';
-const SESSION_FILENAME = 'leeadman-session.json';
+// File names. The "single-user" legacy filename is what the very first
+// pre-accounts builds wrote (no userId in the name); we still recognise it
+// on login as a migration source. The other three files use the
+// `${DATA_FILE_PREFIX}-` prefix from the branding module so a future rename
+// is a one-constant change.
+const LEGACY_SINGLEUSER_DATA_FILENAME = `${DATA_FILE_PREFIX_LEGACY}-data.json`;
+const ACCOUNTS_FILENAME = `${DATA_FILE_PREFIX}-accounts.json`;
+const SESSION_FILENAME = `${DATA_FILE_PREFIX}-session.json`;
 const AUTH_FILENAME = 'auth-lock.json';
 const BACKUPS_DIRNAME = 'backups';
 /**
@@ -93,11 +172,11 @@ const BACKUPS_DIRNAME = 'backups';
 const BACKUPS_KEEP_MAX = 50;
 
 function legacyDataPath() {
-  return path.join(app.getPath('userData'), LEGACY_DATA_FILENAME);
+  return path.join(app.getPath('userData'), LEGACY_SINGLEUSER_DATA_FILENAME);
 }
 
 function dataPathForUser(userId) {
-  return path.join(app.getPath('userData'), `leeadman-data-${userId}.json`);
+  return path.join(app.getPath('userData'), `${DATA_FILE_PREFIX}-data-${userId}.json`);
 }
 
 function accountsPath() {
@@ -123,7 +202,7 @@ function readJsonSafe(filePath, fallback = null) {
     if (!fs.existsSync(filePath)) return fallback;
     return JSON.parse(fs.readFileSync(filePath, 'utf8'));
   } catch (err) {
-    console.error('[leeadman] failed to read', filePath, err);
+    console.error('[cadence] failed to read', filePath, err);
     return fallback;
   }
 }
@@ -136,7 +215,7 @@ function writeJsonSafe(filePath, payload) {
     fs.renameSync(tmp, filePath);
     return true;
   } catch (err) {
-    console.error('[leeadman] failed to write', filePath, err);
+    console.error('[cadence] failed to write', filePath, err);
     return false;
   }
 }
@@ -241,18 +320,18 @@ function readUserDataResult(userId) {
   try {
     text = fs.readFileSync(file, 'utf8');
   } catch (err) {
-    console.error('[leeadman] failed to read user data', err);
+    console.error('[cadence] failed to read user data', err);
     return { ok: false, reason: 'io', error: String(err) };
   }
   const key = dataKeys.get(userId);
   if (isEncryptedFile(text)) {
     if (!key) {
-      console.warn('[leeadman] data file is encrypted but no key in memory for', userId);
+      console.warn('[cadence] data file is encrypted but no key in memory for', userId);
       return { ok: false, reason: 'no-key', encrypted: true };
     }
     const plain = decryptPayload(text, key);
     if (plain == null) {
-      console.warn('[leeadman] data file decrypt failed for', userId, '— wrong key?');
+      console.warn('[cadence] data file decrypt failed for', userId, '— wrong key?');
       return { ok: false, reason: 'bad-key', encrypted: true };
     }
     try {
@@ -299,7 +378,7 @@ function snapshotCurrentDataFile(userId, label = 'pre-write') {
     pruneBackups(dir);
     return target;
   } catch (err) {
-    console.warn('[leeadman] snapshot failed (continuing)', err);
+    console.warn('[cadence] snapshot failed (continuing)', err);
     return null;
   }
 }
@@ -315,7 +394,7 @@ function pruneBackups(dir) {
       try { fs.unlinkSync(old.full); } catch { /* ignore */ }
     }
   } catch (err) {
-    console.warn('[leeadman] prune backups failed', err);
+    console.warn('[cadence] prune backups failed', err);
   }
 }
 
@@ -339,7 +418,7 @@ function writeUserData(userId, payload, { allowOverwriteUnreadable = false } = {
     const existing = readUserDataResult(userId);
     if (!existing.ok && (existing.reason === 'no-key' || existing.reason === 'bad-key')) {
       console.error(
-        '[leeadman] refusing to overwrite undecipherable data file',
+        '[cadence] refusing to overwrite undecipherable data file',
         { userId, reason: existing.reason },
       );
       return {
@@ -368,7 +447,7 @@ function writeJsonText(filePath, text) {
     fs.renameSync(tmp, filePath);
     return true;
   } catch (err) {
-    console.error('[leeadman] failed to write', filePath, err);
+    console.error('[cadence] failed to write', filePath, err);
     return false;
   }
 }
@@ -494,7 +573,7 @@ function safeEqualToken(received, expected) {
 
 // Shape-validate the JSON we accept on POST /v1/snapshot. We DO NOT reject
 // fields we don't recognise (so we don't break forward-compatibility), but
-// we DO require the discriminator fields a legitimate Leeadman client would
+// we DO require the discriminator fields a legitimate Cadence client would
 // always send. Anything else is rejected before it touches the data writer.
 function isValidSnapshotPayload(obj) {
   if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return false;
@@ -634,10 +713,14 @@ function startSyncServer(port = SYNC_DEFAULT_PORT) {
       // Unauthenticated reachability probe. Intentionally minimal so we
       // don't fingerprint our exact version to anyone who can talk to us.
       // The token-bearing client gets richer info elsewhere if it wants.
+      //
+      // Name compat: we emit the new `cadence-sync` identifier going
+      // forward; the client (Settings.tsx) still accepts the legacy
+      // `leeadman-sync` value from peers that haven't been upgraded yet.
       if (url.pathname === '/v1/ping' && req.method === 'GET') {
         res.statusCode = 200;
         res.setHeader('Content-Type', 'application/json');
-        res.end(JSON.stringify({ ok: true, name: 'leeadman-sync' }));
+        res.end(JSON.stringify({ ok: true, name: SYNC_FINGERPRINT }));
         return;
       }
 
@@ -751,7 +834,7 @@ function startSyncServer(port = SYNC_DEFAULT_PORT) {
     });
 
     server.on('error', (err) => {
-      console.error('[leeadman] sync server error', err);
+      console.error('[cadence] sync server error', err);
       reject(err);
     });
     server.listen(port, '0.0.0.0', () => {
@@ -821,7 +904,7 @@ function createWindow() {
     height: 760,
     minWidth: 880,
     minHeight: 560,
-    title: 'Leeadman',
+    title: 'Cadence',
     backgroundColor: '#0b0b10',
     show: false,
     autoHideMenuBar: false,
@@ -874,7 +957,7 @@ function createWindow() {
 
 function buildMenu() {
   const isMac = process.platform === 'darwin';
-  const appName = app.name || 'Leeadman';
+  const appName = app.name || 'Cadence';
 
   const template = [
     ...(isMac
@@ -892,7 +975,7 @@ function buildMenu() {
                       const { autoUpdater } = require('electron-updater');
                       autoUpdater.checkForUpdatesAndNotify();
                     } catch (e) {
-                      console.error('[leeadman] auto-updater error', e);
+                      console.error('[cadence] auto-updater error', e);
                     }
                   }
                 },
@@ -1042,7 +1125,7 @@ function getAutoUpdater() {
       });
     });
     autoUpdater.on('error', (err) => {
-      console.error('[leeadman] autoUpdater error', err);
+      console.error('[cadence] autoUpdater error', err);
       broadcastUpdaterEvent({
         status: 'error',
         message: err && typeof err.message === 'string' ? err.message : String(err),
@@ -1052,7 +1135,7 @@ function getAutoUpdater() {
     updaterInstance = autoUpdater;
     return autoUpdater;
   } catch (err) {
-    console.error('[leeadman] electron-updater unavailable', err);
+    console.error('[cadence] electron-updater unavailable', err);
     return null;
   }
 }
@@ -1061,7 +1144,7 @@ function setupAutoUpdater() {
   const u = getAutoUpdater();
   if (!u) return;
   u.checkForUpdatesAndNotify().catch((err) => {
-    console.error('[leeadman] autoUpdater check failed', err);
+    console.error('[cadence] autoUpdater check failed', err);
   });
 }
 
@@ -1099,10 +1182,11 @@ ipcMain.handle('data:loadResult', () => {
 
 // ---------- IPC: Backups & Recovery -----------------------------------------
 //
-// The user's data lives in `userData/leeadman-data-<userId>.json`. In the
-// past, a single-user `leeadman-data.json` (no userId) was also written. We
-// also continuously snapshot the live file into `userData/backups/<userId>/`
-// before every save, after every login, and on demand.
+// The user's data lives in `userData/cadence-data-<userId>.json`. In the
+// past, a single-user `leeadman-data.json` (no userId) was also written by
+// the pre-accounts and pre-rename builds. We also continuously snapshot
+// the live file into `userData/backups/<userId>/` before every save,
+// after every login, and on demand.
 //
 // These three handlers expose a tiny recovery API so a user can:
 //   1. See every candidate data source on this machine.
@@ -1199,7 +1283,7 @@ ipcMain.handle('data:listSources', () => {
           .sort((a, b) => (a.mtime < b.mtime ? 1 : -1));
         out.backups = entries;
       } catch (err) {
-        console.warn('[leeadman] listSources backups failed', err);
+        console.warn('[cadence] listSources backups failed', err);
       }
     }
   }
@@ -1207,17 +1291,23 @@ ipcMain.handle('data:listSources', () => {
   out.legacy = inspectDataFile(legacyDataPath(), null);
 
   // Surface other per-user files so an admin/user can spot orphaned data files
-  // from a previous account UUID (very common after registering twice).
+  // from a previous account UUID (very common after registering twice). We
+  // accept BOTH the new `cadence-data-*.json` filenames and the legacy
+  // `leeadman-data-*.json` ones so a pre-migration file lying around in the
+  // userData dir (e.g. a manually copied backup) still shows up here.
+  const ORPHAN_RE = new RegExp(
+    `^(?:${DATA_FILE_PREFIX}|${DATA_FILE_PREFIX_LEGACY})-data-([0-9a-fA-F-]{8,})\\.json$`,
+  );
   try {
     for (const name of fs.readdirSync(userData)) {
-      const m = name.match(/^leeadman-data-([0-9a-fA-F-]{8,})\.json$/);
+      const m = name.match(ORPHAN_RE);
       if (!m) continue;
       if (uid && m[1] === uid) continue;
       const info = inspectDataFile(path.join(userData, name), m[1]);
       if (info) out.otherUsers.push(info);
     }
   } catch (err) {
-    console.warn('[leeadman] listSources otherUsers failed', err);
+    console.warn(LOG_TAG, 'listSources otherUsers failed', err);
   }
 
   return out;
@@ -1443,7 +1533,7 @@ ipcMain.handle('cache:clearChromium', async () => {
 
 ipcMain.handle('app:showNotification', (_evt, { title, body } = {}) => {
   if (!Notification.isSupported()) return false;
-  const n = new Notification({ title: title || 'Leeadman', body: body || '' });
+  const n = new Notification({ title: title || 'Cadence', body: body || '' });
   n.show();
   return true;
 });
@@ -1484,7 +1574,7 @@ ipcMain.handle('app:installUpdate', () => {
     try {
       u.quitAndInstall();
     } catch (err) {
-      console.error('[leeadman] quitAndInstall failed', err);
+      console.error('[cadence] quitAndInstall failed', err);
     }
   });
   return { ok: true };
@@ -1514,7 +1604,7 @@ ipcMain.handle('auth:setPin', (_evt, { pin } = {}) => {
   try {
     const round = readAuth();
     if (!round || round.salt !== salt || round.hash !== hash) {
-      console.error('[leeadman] auth:setPin self-verify (round-trip) failed', {
+      console.error('[cadence] auth:setPin self-verify (round-trip) failed', {
         wrote: !!wrote,
         sameSalt: round && round.salt === salt,
         sameHash: round && round.hash === hash,
@@ -1524,12 +1614,12 @@ ipcMain.handle('auth:setPin', (_evt, { pin } = {}) => {
     }
     const reHash = hashWithSalt(safe, round.salt).toString('hex');
     if (reHash !== round.hash) {
-      console.error('[leeadman] auth:setPin self-verify (re-hash) failed — keyspace mismatch');
+      console.error('[cadence] auth:setPin self-verify (re-hash) failed — keyspace mismatch');
       try { fs.unlinkSync(authPath()); } catch (_e) { void _e; }
       return { ok: false, error: 'PIN could not be saved reliably on this device. Please try again.' };
     }
   } catch (err) {
-    console.error('[leeadman] auth:setPin self-verify threw', err);
+    console.error('[cadence] auth:setPin self-verify threw', err);
     try { fs.unlinkSync(authPath()); } catch (_e) { void _e; }
     return { ok: false, error: 'PIN could not be saved reliably on this device. Please try again.' };
   }
@@ -1546,7 +1636,7 @@ ipcMain.handle('auth:verify', (_evt, { pin } = {}) => {
     const exp = Buffer.from(d.hash, 'hex');
     if (got.length !== exp.length) {
       console.warn(
-        '[leeadman] auth:verify length mismatch — got', got.length, 'expected', exp.length,
+        '[cadence] auth:verify length mismatch — got', got.length, 'expected', exp.length,
         'salt[0..6]=', d.salt.slice(0, 6), 'authPath=', authPath(),
       );
       return { ok: false };
@@ -1554,7 +1644,7 @@ ipcMain.handle('auth:verify', (_evt, { pin } = {}) => {
     const matched = crypto.timingSafeEqual(got, exp);
     if (!matched) {
       console.warn(
-        '[leeadman] auth:verify mismatch — pin.length=', safe.length,
+        '[cadence] auth:verify mismatch — pin.length=', safe.length,
         'salt[0..6]=', d.salt.slice(0, 6),
         'storedHash[0..8]=', d.hash.slice(0, 8),
         'authPath=', authPath(),
@@ -1562,7 +1652,7 @@ ipcMain.handle('auth:verify', (_evt, { pin } = {}) => {
     }
     return { ok: matched };
   } catch (err) {
-    console.error('[leeadman] auth:verify threw', err);
+    console.error('[cadence] auth:verify threw', err);
     return { ok: false };
   }
 });
@@ -1755,12 +1845,12 @@ ipcMain.handle('account:login', (_evt, { email, password } = {}) => {
           try {
             const obj = JSON.parse(legacyText);
             writeUserData(u.id, obj);
-            console.log('[leeadman] auto-migrated legacy data into', u.email);
+            console.log('[cadence] auto-migrated legacy data into', u.email);
           } catch {
             fs.copyFileSync(leg, file);
           }
         } catch (err) {
-          console.warn('[leeadman] legacy auto-migrate failed', err);
+          console.warn('[cadence] legacy auto-migrate failed', err);
         }
       }
     }
@@ -1894,6 +1984,49 @@ ipcMain.handle('account:hasLegacyData', () => {
   }
 });
 
+// Verify the current session's account password without performing any state
+// change. Used by features (e.g. Notes recovery setup) that need to bind
+// data to the account password and want to catch a typo at setup time rather
+// than at recovery time. Rate-limited identically to `auth:resetWithAccountPassword`
+// since the brute-force surface is the same.
+const verifyAttempts = { count: 0, blockedUntil: 0 };
+const VERIFY_MAX_ATTEMPTS = 5;
+const VERIFY_BLOCK_MS = 30_000;
+
+ipcMain.handle('account:verifyPassword', (_evt, { password } = {}) => {
+  const now = Date.now();
+  if (verifyAttempts.blockedUntil > now) {
+    const remainingSec = Math.ceil((verifyAttempts.blockedUntil - now) / 1000);
+    return { ok: false, error: `Too many attempts. Try again in ${remainingSec}s.` };
+  }
+  if (typeof password !== 'string' || !password) {
+    return { ok: false, error: 'Account password is required.' };
+  }
+  const uid = readSessionUserId();
+  if (!uid) return { ok: false, error: 'No active account session on this device.' };
+  const accounts = readAccounts();
+  const u = accounts.users.find((x) => x.id === uid);
+  if (!u || typeof u.salt !== 'string' || typeof u.hash !== 'string') {
+    return { ok: false, error: 'Account record is missing or corrupt.' };
+  }
+  try {
+    const got = hashWithSalt(password, u.salt);
+    const exp = Buffer.from(u.hash, 'hex');
+    if (got.length !== exp.length || !crypto.timingSafeEqual(got, exp)) {
+      verifyAttempts.count += 1;
+      if (verifyAttempts.count >= VERIFY_MAX_ATTEMPTS) {
+        verifyAttempts.blockedUntil = now + VERIFY_BLOCK_MS;
+        verifyAttempts.count = 0;
+      }
+      return { ok: false, error: 'Incorrect account password.' };
+    }
+    verifyAttempts.count = 0;
+    return { ok: true };
+  } catch {
+    return { ok: false, error: 'Could not verify account password.' };
+  }
+});
+
 // ---------- IPC: sync ---------------------------------------------------------
 
 ipcMain.handle('sync:status', () => {
@@ -1986,20 +2119,23 @@ app.whenReady().then(() => {
   // later in this session destroys live state, the user can recover.
   try {
     const userData = app.getPath('userData');
+    const LAUNCH_DATA_RE = new RegExp(
+      `^(?:${DATA_FILE_PREFIX}|${DATA_FILE_PREFIX_LEGACY})-data-([0-9a-fA-F-]{8,})\\.json$`,
+    );
     for (const name of fs.readdirSync(userData)) {
-      const m = name.match(/^leeadman-data-([0-9a-fA-F-]{8,})\.json$/);
+      const m = name.match(LAUNCH_DATA_RE);
       if (!m) continue;
       snapshotCurrentDataFile(m[1], 'launch');
     }
   } catch (err) {
-    console.warn('[leeadman] launch snapshot failed', err);
+    console.warn('[cadence] launch snapshot failed', err);
   }
 
   // Resume LAN sync if the user enabled it previously.
   const sCfg = readSyncConfig();
   if (sCfg.enabled && sCfg.token) {
     startSyncServer(SYNC_DEFAULT_PORT).catch((err) => {
-      console.error('[leeadman] sync auto-start failed', err);
+      console.error('[cadence] sync auto-start failed', err);
     });
   }
 
@@ -2017,5 +2153,5 @@ app.on('window-all-closed', () => {
 });
 
 process.on('uncaughtException', (err) => {
-  console.error('[leeadman] uncaught exception', err);
+  console.error('[cadence] uncaught exception', err);
 });

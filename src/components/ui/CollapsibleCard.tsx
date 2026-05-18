@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
+import { STORAGE_PREFIX } from '../../lib/appBranding';
 import { IcChevronDown } from '../icons';
 
-const STORAGE_KEY_PREFIX = 'leeadman:settings:section:';
+const STORAGE_KEY_PREFIX = `${STORAGE_PREFIX}:settings:section:`;
 
 function readPersisted(id: string, fallback: boolean): boolean {
   if (typeof window === 'undefined') return fallback;
@@ -31,7 +32,7 @@ function writePersisted(id: string, open: boolean) {
  * (e.g. the host / pair sub-cards inside Multi-device sync) keep behaving as
  * regular cards so the collapse only applies to the top-level section.
  *
- * Persisted under `localStorage["leeadman:settings:section:<id>"]` as `"1"`
+ * Persisted under `localStorage["cadence:settings:section:<id>"]` as `"1"`
  * (open) or `"0"` (closed). Default is open unless the caller passes
  * `defaultOpen={false}`.
  */

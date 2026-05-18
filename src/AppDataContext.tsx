@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from 'react';
 import { useAccount } from './AccountContext';
+import { STORAGE_PREFIX } from './lib/appBranding';
 import { uuid } from './lib/uuid';
 import {
   addItem as addItemFn,
@@ -145,11 +146,11 @@ const Ctx = createContext<Api | null>(null);
 const SAVE_DEBOUNCE_MS = 400;
 
 function storageKeyForUser(userId: string) {
-  return `leeadman-data-${userId}`;
+  return `${STORAGE_PREFIX}-data-${userId}`;
 }
 
 async function persist(userId: string, data: AppData) {
-  const api = window.leeadman;
+  const api = window.cadence;
   if (api?.saveData) {
     await api.saveData(data);
     return;
@@ -162,7 +163,7 @@ async function persist(userId: string, data: AppData) {
 }
 
 async function loadInitial(userId: string): Promise<AppData> {
-  const api = window.leeadman;
+  const api = window.cadence;
   if (api?.loadData) {
     try {
       const loaded = await api.loadData();
@@ -231,10 +232,10 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       const next = await loadInitial(userId);
       if (cancelled) return;
       let merged = next;
-      const seed = sessionStorage.getItem('leeadman-profile-seed');
+      const seed = sessionStorage.getItem(`${STORAGE_PREFIX}-profile-seed`);
       let seeded = false;
       if (seed?.trim()) {
-        sessionStorage.removeItem('leeadman-profile-seed');
+        sessionStorage.removeItem(`${STORAGE_PREFIX}-profile-seed`);
         const p = next.profile?.displayName ?? 'Me';
         if (p === 'Me' || p === 'Ben' || !next.profile?.displayName?.trim()) {
           merged = updateUserProfileFn(next, { displayName: seed.trim() });
@@ -434,7 +435,7 @@ export function useReminderWatcher() {
           // eslint-disable-next-line no-new
           new Notification(title, { body });
         } else {
-          void window.leeadman?.showNotification?.({ title, body });
+          void window.cadence?.showNotification?.({ title, body });
         }
 
         if (it.remindRepeat && it.remindAt) {

@@ -15,12 +15,16 @@
 function shouldRegister(): boolean {
   if (typeof window === 'undefined') return false;
   if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return false;
-  // Electron host injects window.leeadman; skip SW there.
-  if ((window as unknown as { leeadman?: unknown }).leeadman) return false;
+  // Electron host injects `window.cadence` (and `window.leeadman` as a
+  // backwards-compatibility alias) — either presence means we are inside
+  // Electron and a service worker is neither useful nor compatible.
+  const w = window as unknown as { cadence?: unknown; leeadman?: unknown };
+  if (w.cadence || w.leeadman) return false;
   // file:// protocol cannot host a SW.
   if (window.location.protocol === 'file:') return false;
-  // Only register when the bundle was built with LEEADMAN_PWA=1.
-  if (!import.meta.env.LEEADMAN_PWA) return false;
+  // Only register when the bundle was built with CADENCE_PWA=1 (or the
+  // legacy LEEADMAN_PWA flag, which `vite.config.ts` still honours).
+  if (!import.meta.env.CADENCE_PWA && !import.meta.env.LEEADMAN_PWA) return false;
   return true;
 }
 
@@ -44,7 +48,7 @@ export function registerServiceWorker(): void {
         });
       })
       .catch((err) => {
-        console.warn('[leeadman] service worker registration failed:', err);
+        console.warn('[cadence] service worker registration failed:', err);
       });
   });
 }

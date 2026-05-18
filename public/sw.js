@@ -1,4 +1,4 @@
-/* Leeadman PWA service worker.
+/* Cadence PWA service worker.
  *
  * Strategy:
  *  - Cache the app shell (HTML + manifest + icons) on install
@@ -7,13 +7,16 @@
  *  - "Stale-while-revalidate" for build assets (hashed JS/CSS chunks)
  *  - Bumping CACHE_VERSION wipes old caches on activate. Vite hashes assets
  *    already, so we usually just bump this if we change the SW logic itself.
+ *  - The activate handler deletes any cache whose name doesn't match the
+ *    current one — that means the old `leeadman-*` caches from before the
+ *    Cadence rename are cleaned up automatically on first activation.
  *
  * Note: The Electron host never registers this SW, only the deployed web build
- * does (main.tsx checks LEEADMAN_PWA flag + presence of `serviceWorker` API).
+ * does (main.tsx checks CADENCE_PWA flag + presence of `serviceWorker` API).
  */
 
-const CACHE_VERSION = 'v21-notes-sidebar-overflow';
-const CACHE_NAME = `leeadman-${CACHE_VERSION}`;
+const CACHE_VERSION = 'v25-cadence-full-rename';
+const CACHE_NAME = `cadence-${CACHE_VERSION}`;
 
 const APP_SHELL = [
   './',

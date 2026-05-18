@@ -1,19 +1,21 @@
 <!-- markdownlint-disable MD033 MD041 -->
 <div align="center">
 
-# Leeadman
+# Cadence
 
-**A local-first leadership workspace — teams, people, tasks, notes, goals, feedback, 1:1s, reminders.**
+**A local-first workspace for the rhythm of your week — people, tasks, notes, goals, feedback, 1:1s, reminders.**
 
-[![Release](https://github.com/sercancelenk/leeadman/actions/workflows/release.yml/badge.svg)](https://github.com/sercancelenk/leeadman/actions/workflows/release.yml)
-[![CI](https://github.com/sercancelenk/leeadman/actions/workflows/ci.yml/badge.svg)](https://github.com/sercancelenk/leeadman/actions/workflows/ci.yml)
-[![Pages](https://github.com/sercancelenk/leeadman/actions/workflows/pages.yml/badge.svg)](https://github.com/sercancelenk/leeadman/actions/workflows/pages.yml)
-[![Latest release](https://img.shields.io/github/v/release/sercancelenk/leeadman?display_name=tag&sort=semver)](https://github.com/sercancelenk/leeadman/releases/latest)
+[![Release](https://github.com/sercancelenk/cadence/actions/workflows/release.yml/badge.svg)](https://github.com/sercancelenk/cadence/actions/workflows/release.yml)
+[![CI](https://github.com/sercancelenk/cadence/actions/workflows/ci.yml/badge.svg)](https://github.com/sercancelenk/cadence/actions/workflows/ci.yml)
+[![Pages](https://github.com/sercancelenk/cadence/actions/workflows/pages.yml/badge.svg)](https://github.com/sercancelenk/cadence/actions/workflows/pages.yml)
+[![Latest release](https://img.shields.io/github/v/release/sercancelenk/cadence?display_name=tag&sort=semver)](https://github.com/sercancelenk/cadence/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](#license)
 
 </div>
 
-Leeadman is an Electron + React desktop app that helps people leaders run the boring, important parts of their job — 1:1 follow-ups, goal tracking, feedback logs, structured notes for every direct report, and personal to-dos — **without sending any data to a server**. Everything lives on your machine in JSON files under your user folder. No accounts in the cloud, no telemetry.
+> **Heads up — this project was previously called *Leeadman*.** It has been fully renamed to **Cadence**: window title, Dock, menus, manifest, on-disk file names (`cadence-data-<userId>.json`, `cadence-accounts.json`, …), localStorage keys and macOS `appId` (`com.cadence.app`) all use the new name. If you have data from a pre-rename build on the same machine, the desktop app **auto-migrates it once on first launch** (it copies `Leeadman/` → `Cadence/`, renaming the `leeadman-*` files to `cadence-*`); the legacy folder is left in place as a safety net. If you only have a JSON backup (`leeadman-backup-*.json` exported from the old build), use *Settings → Backup → Import JSON* — the importer reads the file contents, not the filename.
+
+Cadence is an Electron + React desktop app that helps you run the boring, important parts of your week — 1:1 follow-ups, goal tracking, feedback logs, structured notes for every direct report, and personal to-dos — **without sending any data to a server**. Everything lives on your machine in JSON files under your user folder. No accounts in the cloud, no telemetry.
 
 The same React bundle also deploys to GitHub Pages as a **mobile PWA**, so you can capture quick to-dos from your phone.
 
@@ -86,16 +88,16 @@ The same React bundle also deploys to GitHub Pages as a **mobile PWA**, so you c
 
 ### macOS desktop (signed + notarized)
 
-1. Go to the [latest release](https://github.com/sercancelenk/leeadman/releases/latest).
-2. Download `Leeadman-<version>-universal.dmg`. This is a **universal binary** that runs natively on both **Apple Silicon** (M1/M2/M3/M4) and **Intel** Macs — one file for everyone.
-3. Open the DMG and drag `Leeadman.app` into `Applications`.
-4. Launch from Launchpad or Spotlight (⌘ + Space → "Leeadman").
+1. Go to the [latest release](https://github.com/sercancelenk/cadence/releases/latest).
+2. Download `Cadence-<version>-universal.dmg`. This is a **universal binary** that runs natively on both **Apple Silicon** (M1/M2/M3/M4) and **Intel** Macs — one file for everyone.
+3. Open the DMG and drag `Cadence.app` into `Applications`.
+4. Launch from Launchpad or Spotlight (⌘ + Space → "Cadence").
 
 Because the DMG is signed with a **Developer ID Application** certificate **and** notarized by Apple, you will not see any "damaged" or "unidentified developer" warning.
 
 ### Mobile (PWA on iOS / Android)
 
-1. On your phone, open `https://sercancelenk.github.io/leeadman/` in **Safari** (iOS) or **Chrome** (Android).
+1. On your phone, open `https://sercancelenk.github.io/cadence/` in **Safari** (iOS) or **Chrome** (Android).
 2. **iOS:** tap the **Share** button → **Add to Home Screen**.
    **Android:** tap **⋮** → **Install app**.
 3. Launch from the home-screen icon. The app opens full-screen and jumps straight to the To-dos page.
@@ -107,7 +109,7 @@ Because the DMG is signed with a **Developer ID Application** certificate **and*
 If you build a DMG yourself **without** code signing, macOS quarantines it ("… is damaged"). Bypass once with:
 
 ```bash
-xattr -dr com.apple.quarantine /Applications/Leeadman.app
+xattr -dr com.apple.quarantine /Applications/Cadence.app
 ```
 
 The official Releases DMG never needs this.
@@ -116,7 +118,7 @@ The official Releases DMG never needs this.
 
 ## Getting started
 
-1. Launch Leeadman.
+1. Launch Cadence.
 2. Click **Create one** under the sign-in card. Pick an email, display name and a password (8+ chars). The account exists **only on this device**.
 3. You land on the Home screen. From there you can:
    - Open the auto-created **My first team**.
@@ -125,7 +127,7 @@ The official Releases DMG never needs this.
    - See everything due today/this week in *Agenda*.
 4. Press <kbd>⌘ K</kbd> (or <kbd>Ctrl K</kbd>) anywhere to jump to people, items or pages instantly.
 
-> Tip: install Leeadman on a second machine and use *Settings → Backup → Export JSON / Import JSON* to move your data.
+> Tip: install Cadence on a second machine and use *Settings → Backup → Export JSON / Import JSON* to move your data.
 
 ---
 
@@ -267,7 +269,7 @@ Every task row has an **Ask AI** button as soon as you connect a provider in *Se
 - **Append to task** — copy the assistant's answer straight into the task's notes (body) so it sticks around.
 - **Extract tasks from notes** — open *To-dos → Extract from notes* and paste a brain dump (meeting transcript, voice-memo, Slack thread, weekend wishlist). The assistant returns a structured list with one imperative task per line and a suggested priority. You edit titles inline, pick which list each task goes into, and click **Add** (per row) or **Add all** to drop them into your workspace. Nothing is added automatically — the user is always the final filter. The prompt is constrained to return strict JSON so the picker stays predictable across providers.
 - **Where the key is stored**
-  - **Desktop**: inside your encrypted data file (`leeadman-data-<userId>.json`, AES-256-GCM, keyed by your account password).
+  - **Desktop**: inside your encrypted data file (`cadence-data-<userId>.json`, AES-256-GCM, keyed by your account password).
   - **PWA**: in this browser's `localStorage` only (not encrypted) — use a low-budget key with usage limits.
 
 The provider-agnostic transport layer lives in [`src/lib/ai.ts`](./src/lib/ai.ts).
@@ -276,21 +278,21 @@ The provider-agnostic transport layer lives in [`src/lib/ai.ts`](./src/lib/ai.ts
 
 `Settings → Backups & recovery` is your safety net when something goes sideways — for example after a major version upgrade, a password rotation hiccup, or registering a fresh account by mistake.
 
-- **Auto-snapshots** — every save, every successful sign-in and every app launch copies the current `leeadman-data-<userId>.json` into `backups/<userId>/data-<label>-<timestamp>.json`. A rolling window of 50 snapshots is kept; oldest are pruned automatically.
+- **Auto-snapshots** — every save, every successful sign-in and every app launch copies the current `cadence-data-<userId>.json` into `backups/<userId>/data-<label>-<timestamp>.json`. A rolling window of 50 snapshots is kept; oldest are pruned automatically.
 - **Refuse-to-overwrite guard** — the data writer refuses to overwrite an existing file when it can't decrypt it with the current session key (instead of silently destroying it). The renderer surfaces this as a red banner pointing at this page.
 - **Recovery list** — the page enumerates every candidate source on this machine:
   - **Current data file** (live)
-  - **Legacy single-user file** (`leeadman-data.json`, from the pre-accounts era)
+  - **Legacy single-user file** (`leeadman-data.json`, from the pre-accounts era — also picked up by the one-shot rename migration)
   - **Automatic snapshots** (with human-readable "5m ago / 2d ago" times)
-  - **Other accounts on this machine** — orphaned `leeadman-data-<otherId>.json` files, useful when you registered twice
+  - **Other accounts on this machine** — orphaned `cadence-data-<otherId>.json` files (or pre-rename `leeadman-data-<otherId>.json` files left behind), useful when you registered twice
 - Each row shows the file size, modified time, encryption status, and a sniff of what's inside (number of teams, people, items, lists, tasks).
 - **Restore** is one click. The current state is itself snapshotted as `pre-restore` first, so the operation is reversible.
-- **Auto-migrate on login** — if you log in and your per-user data file doesn't exist yet, but `leeadman-data.json` (legacy single-user) does, Leeadman imports it into your account automatically. No more "I updated and my old data is gone" surprise.
-- **Open data folder** — jumps Finder straight to `~/Library/Application Support/Leeadman/` if you want to copy a backup to iCloud / a USB stick.
+- **Auto-migrate on login** — if you log in and your per-user data file doesn't exist yet, but the legacy single-user file (`leeadman-data.json` from pre-accounts builds) does, Cadence imports it into your account automatically. No more "I updated and my old data is gone" surprise.
+- **Open data folder** — jumps Finder straight to `~/Library/Application Support/Cadence/` if you want to copy a backup to iCloud / a USB stick.
 
 ### Storage & cache
 
-`Settings → Storage & cache` is the honest, read-only picture of what Leeadman occupies on this device — plus a safe way to reclaim disk when the browser engine has cached a lot of HTTP responses, V8 code or GPU shaders over months of use.
+`Settings → Storage & cache` is the honest, read-only picture of what Cadence occupies on this device — plus a safe way to reclaim disk when the browser engine has cached a lot of HTTP responses, V8 code or GPU shaders over months of use.
 
 - **Per-bucket sizes**: encrypted data file, legacy file, your backups, backups belonging to other accounts on the same machine, Chromium-managed caches (HTTP / code / GPU / shader, with a per-folder breakdown), total `userData` size.
 - **Clear browser caches** (Electron) — wipes only Chromium-managed caches via the documented `session.clearCache()` / `clearCodeCaches()` / `clearStorageData({ storages: ['cachestorage', 'shadercache'] })` APIs. **Tasks, notes, AI keys, backups and account list are never touched.** Caches repopulate naturally; you may see a one-time slower first request or a shader recompile on next launch.
@@ -308,14 +310,14 @@ This panel is purely diagnostic — you can ignore it forever and nothing degrad
 
 **Per-note lock with workspace master key.** Click the lock button on any note and you'll be prompted, once, to set a **Notes passphrase** (≥ 6 chars). From then on:
 
-1. **One-time key derivation.** When you enter the passphrase, Leeadman runs **PBKDF2-SHA-256 (200,000 iterations)** against a workspace salt (stored in `AppData.notesLock`) to derive a **256-bit master AES-GCM key**. The key is created with `extractable: false`, so its raw bytes can't be retrieved even from JavaScript — only `encrypt` and `decrypt` calls work.
+1. **One-time key derivation.** When you enter the passphrase, Cadence runs **PBKDF2-SHA-256 (200,000 iterations)** against a workspace salt (stored in `AppData.notesLock`) to derive a **256-bit master AES-GCM key**. The key is created with `extractable: false`, so its raw bytes can't be retrieved even from JavaScript — only `encrypt` and `decrypt` calls work.
 2. **The passphrase string is discarded.** Only the `CryptoKey` lives in renderer memory for the rest of the session. A memory dump won't yield the passphrase. The pending-input fields in the dialog are cleared as soon as derivation succeeds.
 3. **Locking a note** encrypts its body with the cached master key and a **fresh random 12-byte IV per save**. Re-encryption is a single AES-GCM block (sub-millisecond) so we can safely re-encrypt **on every keystroke** while you're editing a locked note — the cipher blob on disk is always current.
 4. **Unlocking a note** decrypts the same way. The unlock dialog checks the **verifier blob** first (it tries to decrypt a known constant `"leeadman-notes-v2"`) — so a wrong passphrase is rejected *before* we touch a real note.
 5. **Out-of-order encrypt protection.** A monotonic generation counter discards any encrypt result whose keystroke has already been superseded, so two near-simultaneous typings can't cause the older text to overwrite the newer ciphertext.
 6. **Session lifetime.** The master key is wiped automatically by logging out, locking the app with PIN, or restarting — the `NotesUnlockProvider` lives below `AuthGate` and unmounts in any of those cases.
 
-**Remove the passphrase.** A *Remove lock* button in the Notes sidebar header opens a confirmation dialog. If accepted, Leeadman decrypts every locked note up-front with the current master key; if any note fails (master key mismatch) it aborts the whole operation and leaves your data untouched. On success it converts every locked note back to plaintext and clears `AppData.notesLock` in one atomic save.
+**Remove the passphrase.** A *Remove lock* button in the Notes sidebar header opens a confirmation dialog. If accepted, Cadence decrypts every locked note up-front with the current master key; if any note fails (master key mismatch) it aborts the whole operation and leaves your data untouched. On success it converts every locked note back to plaintext and clears `AppData.notesLock` in one atomic save.
 
 **What's stored where:**
 
@@ -350,7 +352,7 @@ This panel is purely diagnostic — you can ignore it forever and nothing degrad
 - Settings shows the host's reachable LAN URLs, the pairing token (with a Rotate button) and a **Pair with another device** form for the *client* side: paste the URL + token and tap **Pull from host** or **Push to host**.
 - The server auto-resumes on next launch if you previously enabled it.
 
-**Mobile / PWA pairing — the mixed-content fix:** browsers block plain-HTTP fetches from HTTPS pages, so calling `http://192.168.1.5:9787` from `https://*.github.io` is silently denied — that's the "Pull failed" you'd otherwise see. Leeadman dodges this by serving the **same PWA bundle** from the sync server. The host UI shows a `http://<lan-ip>:9787/` URL labelled *For mobile or PWA on this network — open this URL in the browser*; opening it on your phone loads the Leeadman PWA over plain HTTP from the host, so the subsequent `fetch('http://.../v1/snapshot')` is **same-origin** and the browser permits it. No more github.io ↔ LAN dead-end.
+**Mobile / PWA pairing — the mixed-content fix:** browsers block plain-HTTP fetches from HTTPS pages, so calling `http://192.168.1.5:9787` from `https://*.github.io` is silently denied — that's the "Pull failed" you'd otherwise see. Cadence dodges this by serving the **same PWA bundle** from the sync server. The host UI shows a `http://<lan-ip>:9787/` URL labelled *For mobile or PWA on this network — open this URL in the browser*; opening it on your phone loads the Cadence PWA over plain HTTP from the host, so the subsequent `fetch('http://.../v1/snapshot')` is **same-origin** and the browser permits it. No more github.io ↔ LAN dead-end.
 
 **Client UX**: the pair form normalises whatever you type (adds `http://`, defaults port `9787`), has a **Test reachability** button that pings `/v1/ping` with an 8-second timeout, and gives targeted error messages — `401` ("token rotated/wrong"), `503` ("no user signed in on the host"), timeout ("check Wi-Fi and that the host server is running") instead of a generic "Pull failed".
 
@@ -381,12 +383,12 @@ Net: on a trusted home network, HTTP-on-LAN + the hardening above is more honest
 
 ## Mobile / PWA
 
-Leeadman ships as a **Progressive Web App** in addition to the desktop Electron build. The same React bundle is deployed to GitHub Pages and installable on iOS/Android.
+Cadence ships as a **Progressive Web App** in addition to the desktop Electron build. The same React bundle is deployed to GitHub Pages and installable on iOS/Android.
 
 ### Setup (repository owner — one-time)
 
 1. **Settings → Pages → Source: GitHub Actions**.
-2. Push to `main`. The [`pages.yml`](.github/workflows/pages.yml) workflow runs, builds with `LEEADMAN_PWA=1`, and publishes to `https://<user>.github.io/leeadman/`.
+2. Push to `main`. The [`pages.yml`](.github/workflows/pages.yml) workflow runs, builds with `CADENCE_PWA=1`, and publishes to `https://<user>.github.io/cadence/`.
 
 ### Install on your phone
 
@@ -406,7 +408,7 @@ Leeadman ships as a **Progressive Web App** in addition to the desktop Electron 
 # Regenerate icons after editing public/icon.svg
 npm run icons
 
-# Build for GitHub Pages (sets base path to /leeadman/)
+# Build for GitHub Pages (sets base path to /cadence/)
 npm run build:pwa
 ```
 
@@ -441,9 +443,9 @@ src/pwa.ts                  # SW registration (skipped under Electron/file://)
 
 ## Keyboard & native menus
 
-Leeadman ships with a native menu bar (English):
+Cadence ships with a native menu bar (English):
 
-- **Leeadman** — About, Check for Updates…, Quit
+- **Cadence** — About, Check for Updates…, Quit
 - **File** — Close window / Quit
 - **Edit** — Undo / Redo / Cut / Copy / Paste / Select All
 - **View** — Reload, Zoom, Toggle Full Screen
@@ -456,10 +458,10 @@ Standard shortcuts apply (⌘ Q, ⌘ W, ⌘ R, ⌘ F, ⌘ , …). The global **�
 
 ## Data, privacy and backups
 
-- **Where data lives** (macOS): `~/Library/Application Support/Leeadman/`
-  - `leeadman-accounts.json` — user list (email, salted **scrypt** password hash, per-user `encSalt`).
-  - `leeadman-session.json` — id of the signed-in user.
-  - `leeadman-data-<userId>.json` — your workspace data, per account, **encrypted at rest** (AI key, tasks, lists, people, notes, preferences — everything).
+- **Where data lives** (macOS): `~/Library/Application Support/Cadence/`. (Pre-rename installs originally wrote to `~/Library/Application Support/Leeadman/`; that folder is consumed and converted on first launch — see [Dev vs installed app data isolation](#dev-vs-installed-app-data-isolation).)
+  - `cadence-accounts.json` — user list (email, salted **scrypt** password hash, per-user `encSalt`).
+  - `cadence-session.json` — id of the signed-in user.
+  - `cadence-data-<userId>.json` — your workspace data, per account, **encrypted at rest** (AI key, tasks, lists, people, notes, preferences — everything).
   - `leeadman-data.json` — legacy single-user file from pre-accounts versions (only present if you upgraded from an old install). Auto-imported on first login.
   - `backups/<userId>/data-<label>-<timestamp>.json` — rolling auto-snapshots (50 slots; labels include `launch`, `post-login`, `pre-save`, `pre-pwchange`, `pre-restore`).
   - `auth-lock.json` — optional PIN hash.
@@ -489,7 +491,7 @@ You can also force an interactive check from *Settings → Auto updates → Chec
 - When the download finishes: an *Install & restart* button — clicking it runs `quitAndInstall` so the app closes, swaps in the new binary, and relaunches without you having to manually quit. *Later* defers the install until next launch.
 - Errors are surfaced inline with the message from `electron-updater`.
 
-You can also trigger the same check from the menu bar via *Leeadman → Check for Updates…*. Development builds (`npm run dev`) short-circuit the check and the dialog shows a "disabled in development mode" notice.
+You can also trigger the same check from the menu bar via *Cadence → Check for Updates…*. Development builds (`npm run dev`) short-circuit the check and the dialog shows a "disabled in development mode" notice.
 
 The PWA "updates" itself silently via the service worker — the next time the device is online and you reopen the app, the new build is fetched and applied on the following navigation. Bumping `CACHE_VERSION` in `public/sw.js` invalidates every old cache.
 
@@ -506,7 +508,7 @@ The PWA "updates" itself silently via the service worker — the next time the d
 ### Install
 
 ```bash
-git clone https://github.com/sercancelenk/leeadman.git
+git clone https://github.com/sercancelenk/cadence.git
 cd leeadman
 npm install
 ```
@@ -515,9 +517,9 @@ npm install
 
 | Script | What it does |
 |---|---|
-| `npm run dev` | Starts Vite at `http://localhost:5173` and launches Electron pointed at it with hot reload. Runs in an **isolated `userData` directory** (`~/Library/Application Support/Leeadman (Dev)/` on macOS), so a dev session can never read, write or corrupt the data of the installed app — see [Dev vs installed app data isolation](#dev-vs-installed-app-data-isolation). |
+| `npm run dev` | Starts Vite at `http://localhost:5173` and launches Electron pointed at it with hot reload. Runs in an **isolated `userData` directory** (`~/Library/Application Support/Cadence (Dev)/` on macOS), so a dev session can never read, write or corrupt the data of the installed app — see [Dev vs installed app data isolation](#dev-vs-installed-app-data-isolation). |
 | `npm run build:web` | Builds the Electron-targeted React bundle (`base: ./`) into `dist/`. |
-| `npm run build:pwa` | Builds the GitHub-Pages-targeted PWA bundle (`base: /leeadman/`) into `dist/`. |
+| `npm run build:pwa` | Builds the GitHub-Pages-targeted PWA bundle (`base: /cadence/`) into `dist/`. |
 | `npm run build` | `build:web` + `electron-builder` (local desktop bundle). |
 | `npm run build:release` | `build:web` + `electron-builder --publish always` (used by the release workflow). |
 | `npm run icons` | Regenerates PWA icons from `public/icon.svg` (uses `sharp`). |
@@ -531,15 +533,14 @@ CSC_IDENTITY_AUTO_DISCOVERY=false npm run build
 
 ### Dev vs installed app data isolation
 
-If you've already installed Leeadman from a DMG **and** you want to run the
+If you've already installed Cadence from a DMG **and** you want to run the
 local checkout side-by-side to try out new features, the two builds could
 otherwise share the same on-disk data — Electron derives `userData` from
-`app.getName()`, and macOS APFS is case-insensitive, so
-`~/Library/Application Support/Leeadman/` (installed) and
-`~/Library/Application Support/leeadman/` (dev) used to resolve to the same
-directory. Running a dev build on prod data is risky because a dev build
-typically writes a newer on-disk schema than the installed version
-understands, which can silently strip new fields on the next save.
+`app.getName()`, and macOS APFS is case-insensitive, so two builds with
+the same display name resolve to the same directory. Running a dev build
+on prod data is risky because a dev build typically writes a newer
+on-disk schema than the installed version understands, which can silently
+strip new fields on the next save.
 
 To prevent this, `electron/main.cjs` detects dev mode (the
 `VITE_DEV_SERVER_URL` env var that `npm run dev` sets) and routes everything
@@ -547,13 +548,26 @@ through a separate folder:
 
 | Build | macOS `userData` |
 |---|---|
-| Installed DMG (production) | `~/Library/Application Support/Leeadman/` |
-| `npm run dev` | `~/Library/Application Support/Leeadman (Dev)/` |
+| Installed DMG (production) | `~/Library/Application Support/Cadence/` |
+| `npm run dev` | `~/Library/Application Support/Cadence (Dev)/` |
+
+#### One-shot migration from the pre-rename name
+
+This project used to be called *Leeadman*. The very first launch after the
+rename detects a `~/Library/Application Support/Leeadman/` (or `Leeadman
+(Dev)/` for dev) folder, copies its contents into the new `Cadence/` (or
+`Cadence (Dev)/`) folder, and **renames every `leeadman-*.json` to
+`cadence-*.json` on the way**. The legacy folder is left in place untouched
+as a safety net — feel free to delete it manually once you've confirmed
+your data made it across. The migration is guarded by the presence of
+`cadence-accounts.json` in the new folder, so it never runs twice and
+never overwrites a workspace you've already started using under the new
+name.
 
 Side effects you should know about:
 
-- The dev build starts with **no accounts, no tasks, no notes** — you'll see
-  the same "register an account" screen as a brand-new user.
+- A brand-new dev session starts with **no accounts, no tasks, no notes** —
+  you'll see the same "register an account" screen as a brand-new user.
 - The single-instance lock keys off `app.getName()` too, so the installed
   app and a dev session can **run at the same time**. They'll appear as two
   separate apps in the Dock; both windows are functional.
@@ -562,8 +576,8 @@ Side effects you should know about:
 - To **test on a copy of your real data**, quit the installed app first
   (it writes on quit), then copy the file you care about:
   ```bash
-  cp -R "~/Library/Application Support/Leeadman/"* \
-        "~/Library/Application Support/Leeadman (Dev)/"
+  cp -R "~/Library/Application Support/Cadence/"* \
+        "~/Library/Application Support/Cadence (Dev)/"
   ```
   This includes accounts, encrypted data files, backups and sync config.
   The dev session opens the next time you `npm run dev`.
@@ -592,7 +606,7 @@ tab and pick the workflow you want; CI runs first as a gate inside it.
 
 1. **Actions** tab → **Release** → **Run workflow** (on `main`).
 2. The reusable CI job runs first; if it goes red the macOS job is skipped, no DMG built, no Apple minutes burned.
-3. On green, the macOS runner signs + notarizes + publishes. Once the release shows up on GitHub, every installed Leeadman picks it up via [`electron-updater`](#auto-updates).
+3. On green, the macOS runner signs + notarizes + publishes. Once the release shows up on GitHub, every installed Cadence picks it up via [`electron-updater`](#auto-updates).
 
 ### Updating the mobile PWA
 
@@ -650,9 +664,9 @@ The Team ID is also configured in `package.json` under `build.mac.notarize.teamI
 After installing a signed build:
 
 ```bash
-codesign -dv --verbose=4 /Applications/Leeadman.app
-spctl -a -t exec -vv /Applications/Leeadman.app
-xcrun stapler validate /Applications/Leeadman.app
+codesign -dv --verbose=4 /Applications/Cadence.app
+spctl -a -t exec -vv /Applications/Cadence.app
+xcrun stapler validate /Applications/Cadence.app
 ```
 
 `spctl` should respond with `accepted source=Notarized Developer ID`. If it does, every user can install your DMG without any warning.
@@ -732,7 +746,7 @@ The signed binary uses the entitlements at [`build/entitlements.mac.plist`](./bu
 ## Electron deep dive
 
 If you want to go beyond "build it and ship it" and actually understand how
-the desktop side of Leeadman works under the hood, there's a dedicated guide
+the desktop side of Cadence works under the hood, there's a dedicated guide
 that doubles as a hands-on Electron tutorial:
 
 > **[docs/electron-guide.md](docs/electron-guide.md)** — a practical Electron
@@ -750,12 +764,12 @@ top-to-bottom and end up confidently extending `electron/main.cjs` and
 ## Troubleshooting
 
 <details>
-<summary><strong>macOS says "Leeadman.app is damaged and can't be opened"</strong></summary>
+<summary><strong>macOS says "Cadence.app is damaged and can't be opened"</strong></summary>
 
-For official releases this should not happen — they are signed + notarized. If it does, the file was likely tampered with in transit; download again from the [releases page](https://github.com/sercancelenk/leeadman/releases). For DIY (unsigned) builds, run:
+For official releases this should not happen — they are signed + notarized. If it does, the file was likely tampered with in transit; download again from the [releases page](https://github.com/sercancelenk/cadence/releases). For DIY (unsigned) builds, run:
 
 ```bash
-xattr -dr com.apple.quarantine /Applications/Leeadman.app
+xattr -dr com.apple.quarantine /Applications/Cadence.app
 ```
 
 </details>
@@ -784,7 +798,7 @@ The service worker uses network-first for navigation, so a second visit when onl
 <details>
 <summary><strong>I forgot my account password</strong></summary>
 
-Passwords are not recoverable (they're stored as salted scrypt hashes locally). You can edit `leeadman-accounts.json` in `~/Library/Application Support/Leeadman/` and remove the user entry, then sign up again. Your workspace JSON file is named `leeadman-data-<userId>.json` — keep it if you want to import it into the new account.
+Passwords are not recoverable (they're stored as salted scrypt hashes locally). You can edit `cadence-accounts.json` in `~/Library/Application Support/Cadence/` and remove the user entry, then sign up again. Your workspace JSON file is named `cadence-data-<userId>.json` — keep it if you want to import it into the new account.
 
 </details>
 
@@ -798,7 +812,7 @@ The lock screen has a *Forgot PIN? Reset with account password* link. It asks fo
 <details>
 <summary><strong>I updated and my data looks empty / I see a "refusing to overwrite" banner</strong></summary>
 
-Don't panic — your data is still on disk. Open *Settings → Backups & recovery*. The page lists every candidate source: the current file, the legacy single-user file (`leeadman-data.json`), every automatic snapshot (50 rolling slots labelled `launch` / `post-login` / `pre-save` / `pre-pwchange` / `pre-restore`), and any orphaned per-user file from a previous account UUID. Pick the one with the right item counts → **Restore**. The current state is itself snapshotted as `pre-restore` first, so the operation is reversible.
+Don't panic — your data is still on disk. Open *Settings → Backups & recovery*. The page lists every candidate source: the current file, the legacy single-user file (`leeadman-data.json`, from pre-accounts builds), every automatic snapshot (50 rolling slots labelled `launch` / `post-login` / `pre-save` / `pre-pwchange` / `pre-restore`), and any orphaned per-user file from a previous account UUID. Pick the one with the right item counts → **Restore**. The current state is itself snapshotted as `pre-restore` first, so the operation is reversible.
 
 </details>
 

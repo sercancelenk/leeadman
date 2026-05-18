@@ -4,6 +4,12 @@ import { Button } from '../components/ui/Button';
 import { useAppData } from '../AppDataContext';
 import { useSession } from '../AuthContext';
 import { askAI, AIError, defaultModel } from '../lib/ai';
+import {
+  APP_SLUG,
+  DATA_FILE_PREFIX,
+  SYNC_FINGERPRINT,
+  SYNC_FINGERPRINT_LEGACY,
+} from '../lib/appBranding';
 import type { AIProvider, AppData } from '../model';
 import { AI_PROVIDER_OPTIONS } from '../model';
 import { useTheme } from '../ThemeContext';
@@ -24,9 +30,9 @@ export function Settings() {
 
   useEffect(() => {
     void (async () => {
-      const p = await window.leeadman?.userDataPath?.();
+      const p = await window.cadence?.userDataPath?.();
       if (p) setPath(p);
-      const v = await window.leeadman?.getAppVersion?.();
+      const v = await window.cadence?.getAppVersion?.();
       if (v) setAppVersion(v);
       await refreshSession();
     })();
@@ -37,7 +43,7 @@ export function Settings() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `leeadman-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `${APP_SLUG}-backup-${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -73,7 +79,7 @@ export function Settings() {
 
       <CollapsibleCard id="pin" title="PIN protection" badge={pinEnabled ? 'Enabled' : 'Disabled'}>
         <p className="muted">
-          Adds a quick lock screen when Leeadman starts and when you choose <em>Lock now</em>. Useful when you step away from your desk so a passer-by can't open the app and read 1:1 notes.
+          Adds a quick lock screen when Cadence starts and when you choose <em>Lock now</em>. Useful when you step away from your desk so a passer-by can't open the app and read 1:1 notes.
         </p>
         <p className="muted small">
           The PIN is independent of your account password. Your data file is already encrypted at rest with a key derived from the account password — the PIN is purely a UI barrier in front of the unlocked workspace.
@@ -103,7 +109,7 @@ export function Settings() {
               // rolls back if the stored hash cannot reproduce the same PIN.
               // So a successful response here guarantees the lock screen will
               // accept the same characters the user just typed.
-              const r = await window.leeadman?.authSetPin?.({ pin: a });
+              const r = await window.cadence?.authSetPin?.({ pin: a });
               if (r?.ok) {
                 setNewPin('');
                 setNewPin2('');
@@ -131,7 +137,7 @@ export function Settings() {
             style={{ marginTop: 10, flexDirection: 'column', alignItems: 'stretch' }}
             onSubmit={async (e: FormEvent) => {
               e.preventDefault();
-              const r = await window.leeadman?.authClear?.({ pin: clearPin.trim() });
+              const r = await window.cadence?.authClear?.({ pin: clearPin.trim() });
               if (r?.ok) {
                 setClearPin('');
                 await refreshSession();
@@ -181,7 +187,7 @@ export function Settings() {
 
       <CollapsibleCard id="data-location" title="Data location (Electron)" defaultOpen={false}>
         {path ? <pre className="pre">{path}</pre> : <p className="muted">No Electron data path available; in the browser preview, data lives in localStorage.</p>}
-        <p className="muted small">File name pattern: leeadman-data-&lt;userId&gt;.json</p>
+        <p className="muted small">File name pattern: {DATA_FILE_PREFIX}-data-&lt;userId&gt;.json</p>
       </CollapsibleCard>
 
       <CollapsibleCard id="backup" title="Backup">
@@ -212,7 +218,9 @@ export function Settings() {
           />
         </div>
         <p className="muted small" style={{ marginTop: 8 }}>
-          Importing replaces your existing data. Always export a backup first.
+          Importing replaces your existing data. Always export a backup first. Backups exported by older
+          builds (file name <code>leeadman-backup-*.json</code>) work too — the importer reads the JSON
+          contents, not the filename.
         </p>
       </CollapsibleCard>
 
@@ -244,14 +252,14 @@ type SyncStatus = {
 
 function SyncSection() {
   const { data, replaceAll } = useAppData();
-  const isElectronHost = typeof window !== 'undefined' && !!window.leeadman?.syncStatus;
+  const isElectronHost = typeof window !== 'undefined' && !!window.cadence?.syncStatus;
 
   const [status, setStatus] = useState<SyncStatus | null>(null);
   const [busy, setBusy] = useState(false);
 
   const refreshStatus = async () => {
     if (!isElectronHost) return;
-    const s = await window.leeadman!.syncStatus();
+    const s = await window.cadence!.syncStatus();
     setStatus(s);
   };
 
@@ -263,7 +271,7 @@ function SyncSection() {
   const enable = async () => {
     setBusy(true);
     try {
-      const r = await window.leeadman!.syncEnable();
+      const r = await window.cadence!.syncEnable();
       if (!r?.ok) window.alert(r?.error ?? 'Could not start sync server.');
       await refreshStatus();
     } finally {
@@ -274,7 +282,7 @@ function SyncSection() {
   const disable = async () => {
     setBusy(true);
     try {
-      await window.leeadman!.syncDisable();
+      await window.cadence!.syncDisable();
       await refreshStatus();
     } finally {
       setBusy(false);
@@ -284,7 +292,7 @@ function SyncSection() {
   const rotate = async () => {
     setBusy(true);
     try {
-      const r = await window.leeadman!.syncRotateToken();
+      const r = await window.cadence!.syncRotateToken();
       if (!r?.ok) window.alert('Could not rotate token.');
       await refreshStatus();
     } finally {
@@ -331,9 +339,9 @@ function SyncSection() {
         case 401:
           return { kind: 'error', text: `${label} failed: token is incorrect or has been rotated on the host.` };
         case 503:
-          return { kind: 'error', text: `${label} failed: no signed-in user on the host (open Leeadman there and log in first).` };
+          return { kind: 'error', text: `${label} failed: no signed-in user on the host (open Cadence there and log in first).` };
         case 404:
-          return { kind: 'error', text: `${label} failed: host responded but doesn't speak Leeadman sync (404). Double-check the URL/port.` };
+          return { kind: 'error', text: `${label} failed: host responded but doesn't speak Cadence sync (404). Double-check the URL/port.` };
         default:
           return { kind: 'error', text: `${label} failed (HTTP ${resp.status}).` };
       }
@@ -376,10 +384,15 @@ function SyncSection() {
         return;
       }
       const j = await resp.json();
-      if (j?.name !== 'leeadman-sync') {
+      // Accept both the current sync fingerprint and the pre-rename one,
+      // so a freshly-installed Cadence build can pair with a desktop peer
+      // that hasn't been upgraded yet. The set is intentionally small —
+      // we still want to reject random services that happen to live on
+      // the discovered port.
+      if (j?.name !== SYNC_FINGERPRINT && j?.name !== SYNC_FINGERPRINT_LEGACY) {
         setPairMsg({
           kind: 'error',
-          text: 'Reachable, but the responder is not a Leeadman sync server. Double-check the URL.',
+          text: 'Reachable, but the responder is not a Cadence sync server. Double-check the URL.',
         });
         return;
       }
@@ -556,7 +569,7 @@ function SyncSection() {
                         </p>
                       </div>
                       <div className="field">
-                        <span>API base (for another desktop Leeadman)</span>
+                        <span>API base (for another desktop Cadence)</span>
                         {hostUrls.map((u) => (
                           <input
                             key={`api-${u}`}
@@ -590,9 +603,9 @@ function SyncSection() {
             is <code>http://</code>. Browsers refuse to fetch across that boundary — that's exactly the &quot;Pull
             failed&quot; you'd see otherwise.
             <p style={{ margin: '8px 0 0' }}>
-              <strong>Fix:</strong> on the host (the desktop running Leeadman), copy the LAN URL it shows under{' '}
+              <strong>Fix:</strong> on the host (the desktop running Cadence), copy the LAN URL it shows under{' '}
               <em>This device as host → For mobile or PWA on this network</em> (e.g. <code>http://192.168.1.5:9787/</code>)
-              and open <strong>that</strong> URL in your mobile browser. It loads the same Leeadman PWA over plain
+              and open <strong>that</strong> URL in your mobile browser. It loads the same Cadence PWA over plain
               HTTP from the host, so pairing then just works.
             </p>
           </div>
@@ -703,7 +716,7 @@ function UpdaterDialog({ open, onClose }: { open: boolean; onClose: () => void }
 
   useEffect(() => {
     if (!open) return;
-    const api = window.leeadman;
+    const api = window.cadence;
     if (!api?.onUpdaterEvent || !api?.checkForUpdates) {
       setPhase({ kind: 'unsupported' });
       return;
@@ -759,7 +772,7 @@ function UpdaterDialog({ open, onClose }: { open: boolean; onClose: () => void }
 
   const installNow = async () => {
     setInstalling(true);
-    const r = await window.leeadman?.installUpdate?.();
+    const r = await window.cadence?.installUpdate?.();
     if (!r?.ok) {
       setInstalling(false);
       window.alert(r?.error ?? 'Could not install the update.');
@@ -955,7 +968,7 @@ function AISettingsSection() {
     }
   };
 
-  const isDesktop = typeof window !== 'undefined' && !!window.leeadman;
+  const isDesktop = typeof window !== 'undefined' && !!window.cadence;
 
   return (
     <CollapsibleCard
@@ -1129,7 +1142,7 @@ function AISettingsSection() {
 
 function BackupsRecoverySection() {
   const { reload } = useAppData();
-  const isElectron = typeof window !== 'undefined' && !!window.leeadman?.dataListSources;
+  const isElectron = typeof window !== 'undefined' && !!window.cadence?.dataListSources;
   const [sources, setSources] = useState<DataSources | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
@@ -1139,7 +1152,7 @@ function BackupsRecoverySection() {
     if (!isElectron) return;
     setBusy(true);
     try {
-      const r = await window.leeadman!.dataListSources!();
+      const r = await window.cadence!.dataListSources!();
       setSources(r);
     } finally {
       setBusy(false);
@@ -1148,8 +1161,8 @@ function BackupsRecoverySection() {
 
   useEffect(() => {
     void refresh();
-    if (!window.leeadman?.onSaveError) return;
-    const off = window.leeadman.onSaveError((e) => setSaveError(e));
+    if (!window.cadence?.onSaveError) return;
+    const off = window.cadence.onSaveError((e) => setSaveError(e));
     return off;
   }, []);
 
@@ -1171,7 +1184,7 @@ function BackupsRecoverySection() {
     setBusy(true);
     setMsg(null);
     try {
-      const r = await window.leeadman!.dataRestoreFromSource!({ filePath });
+      const r = await window.cadence!.dataRestoreFromSource!({ filePath });
       if (r.ok) {
         setMsg({ kind: 'ok', text: `Restored from ${r.restoredFrom ?? label}. Reloading…` });
         await reload();
@@ -1187,7 +1200,7 @@ function BackupsRecoverySection() {
   };
 
   const openFolder = async () => {
-    await window.leeadman?.openUserDataFolder?.();
+    await window.cadence?.openUserDataFolder?.();
   };
 
   const totalSnapshots = sources?.backups.length ?? 0;
@@ -1200,7 +1213,7 @@ function BackupsRecoverySection() {
       badge={sources ? `${totalSnapshots} snapshot${totalSnapshots === 1 ? '' : 's'}` : undefined}
     >
       <p className="muted small" style={{ marginBottom: 12 }}>
-        Leeadman snapshots your data file every time it saves, after every sign-in, and at app launch. If something looks
+        Cadence snapshots your data file every time it saves, after every sign-in, and at app launch. If something looks
         wrong (e.g. your data appeared empty after an update), you can restore from any snapshot below — your <em>current</em>
         state is always backed up first, so this is reversible.
       </p>
@@ -1216,7 +1229,7 @@ function BackupsRecoverySection() {
             color: 'var(--text)',
           }}
         >
-          <strong>Heads up:</strong> Leeadman refused to overwrite your data file because it cannot be decrypted with the
+          <strong>Heads up:</strong> Cadence refused to overwrite your data file because it cannot be decrypted with the
           current session key. Your data is still on disk — pick a recent backup below and restore it.
           <div className="muted small" style={{ marginTop: 4 }}>
             Reason: {saveError.reason ?? 'unknown'}
@@ -1255,8 +1268,8 @@ function BackupsRecoverySection() {
             onRestore={null}
           />
           <DataSourceRow
-            label="Legacy single-user file (leeadman-data.json)"
-            sub="From the pre-accounts version of Leeadman. Restoring imports it into your current account."
+            label="Legacy single-user file (leeadman-data.json — pre-rename)"
+            sub="From the pre-accounts version (Leeadman). Restoring imports it into your current account."
             info={sources.legacy}
             onRestore={(f) => restore(f, 'legacy data file')}
           />
@@ -1308,14 +1321,14 @@ function BackupsRecoverySection() {
 // ────────────────────────────────────────────────────────────────────────
 // Storage & cache
 // ────────────────────────────────────────────────────────────────────────
-// Honest, read-only picture of what Leeadman occupies on disk plus a
+// Honest, read-only picture of what Cadence occupies on disk plus a
 // **safe** cache-wipe button. The wipe ONLY touches Chromium-managed
 // caches (HTTP cache, V8 code cache, GPU/shader caches) — never your
 // tasks, notes, AI keys, backups or account list.
 
 function StorageCacheSection() {
   const isElectron =
-    typeof window !== 'undefined' && !!window.leeadman?.cacheStats && !!window.leeadman?.clearChromiumCache;
+    typeof window !== 'undefined' && !!window.cadence?.cacheStats && !!window.cadence?.clearChromiumCache;
   const [stats, setStats] = useState<CacheStats | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
@@ -1325,7 +1338,7 @@ function StorageCacheSection() {
     if (!isElectron) return;
     setBusy(true);
     try {
-      const r = await window.leeadman!.cacheStats!();
+      const r = await window.cadence!.cacheStats!();
       setStats(r);
     } finally {
       setBusy(false);
@@ -1348,7 +1361,7 @@ function StorageCacheSection() {
     setBusy(true);
     setMsg(null);
     try {
-      const r = await window.leeadman!.clearChromiumCache!();
+      const r = await window.cadence!.clearChromiumCache!();
       if (r.ok) {
         setMsg({
           kind: 'ok',
@@ -1392,7 +1405,7 @@ function StorageCacheSection() {
       badge={stats && stats.ok ? formatBytes(stats.totalBytes) : undefined}
     >
       <p className="muted small" style={{ marginBottom: 12 }}>
-        How much disk Leeadman uses on this device, and a safe way to reclaim space. Your tasks, notes, AI keys and
+        How much disk Cadence uses on this device, and a safe way to reclaim space. Your tasks, notes, AI keys and
         backups are <strong>never</strong> touched by the cache buttons below.
       </p>
 

@@ -7,6 +7,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+import { STORAGE_PREFIX } from './lib/appBranding';
 import { pbkdf2HashPassword, pbkdf2VerifyPassword } from './lib/passwordPbkdf2';
 
 export type AccountUser = { id: string; email: string; displayName?: string };
@@ -27,6 +28,8 @@ type Ctx = {
     oldPassword: string;
     newPassword: string;
   }) => Promise<{ ok: boolean; error?: string }>;
+  /** Verify the *current* account password without performing any state change. */
+  verifyPassword: (password: string) => Promise<{ ok: boolean; error?: string }>;
   hasElectronAccounts: boolean;
   hasLegacyData: boolean;
   refreshLegacyHint: () => Promise<void>;
@@ -34,13 +37,13 @@ type Ctx = {
 
 const AccountCtx = createContext<Ctx | null>(null);
 
-const DEV_ACCOUNTS_KEY = 'leeadman-browser-accounts';
-const DEV_SESSION_KEY = 'leeadman-browser-session';
+const DEV_ACCOUNTS_KEY = `${STORAGE_PREFIX}-browser-accounts`;
+const DEV_SESSION_KEY = `${STORAGE_PREFIX}-browser-session`;
 
 type StoredUser = AccountUser & { saltB64: string; hashB64: string; createdAt: string };
 
 function useElectronAccount(): boolean {
-  return typeof window !== 'undefined' && !!window.leeadman?.accountSession;
+  return typeof window !== 'undefined' && !!window.cadence?.accountSession;
 }
 
 async function readDevAccounts(): Promise<{ users: StoredUser[] }> {
@@ -81,8 +84,8 @@ export function AccountProvider({ children }: { children: ReactNode }) {
   const electron = useElectronAccount();
 
   const refreshLegacyHint = useCallback(async () => {
-    if (window.leeadman?.accountHasLegacyData) {
-      const r = await window.leeadman.accountHasLegacyData();
+    if (window.cadence?.accountHasLegacyData) {
+      const r = await window.cadence.accountHasLegacyData();
       setHasLegacyData(!!r?.has);
     } else {
       setHasLegacyData(false);
@@ -90,8 +93,8 @@ export function AccountProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const refresh = useCallback(async () => {
-    if (window.leeadman?.accountSession) {
-      const r = await window.leeadman.accountSession();
+    if (window.cadence?.accountSession) {
+      const r = await window.cadence.accountSession();
       setUser(r?.user ?? null);
       setLoading(false);
       await refreshLegacyHint();
@@ -121,8 +124,8 @@ export function AccountProvider({ children }: { children: ReactNode }) {
   const login = useCallback(
     async (email: string, password: string) => {
       const em = email.trim().toLowerCase();
-      if (window.leeadman?.accountLogin) {
-        const r = await window.leeadman.accountLogin({ email: em, password });
+      if (window.cadence?.accountLogin) {
+        const r = await window.cadence.accountLogin({ email: em, password });
         if (r?.ok && r.user) {
           setUser(r.user);
           return { ok: true as const };
@@ -136,7 +139,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
         // localStorage / autofill issues. Defence-in-depth doesn't apply
         // here because every account file lives on this user's own device.
         console.warn(
-          '[leeadman] login: no account for email',
+          '[cadence] login: no account for email',
           em,
           '— stored emails:',
           users.map((x) => x.email),
@@ -148,7 +151,7 @@ export function AccountProvider({ children }: { children: ReactNode }) {
       }
       const ok = await pbkdf2VerifyPassword(password, u.saltB64, u.hashB64);
       if (!ok) {
-        console.warn('[leeadman] login: password mismatch for', em, '(stored hash length:', u.hashB64.length, ')');
+        console.warn('[cadence] login: password mismatch for', em, '(stored hash length:', u.hashB64.length, ')');
         return { ok: false as const, error: 'Incorrect password for this account.' };
       }
       writeDevSession(u.id);
@@ -165,8 +168,8 @@ export function AccountProvider({ children }: { children: ReactNode }) {
       if (opts.password.length < 8) return { ok: false as const, error: 'Password must be at least 8 characters.' };
       if (!em.includes('@')) return { ok: false as const, error: 'Please enter a valid email.' };
 
-      if (window.leeadman?.accountRegister) {
-        const r = await window.leeadman.accountRegister({
+      if (window.cadence?.accountRegister) {
+        const r = await window.cadence.accountRegister({
           email: em,
           password: opts.password,
           displayName,
@@ -219,8 +222,8 @@ export function AccountProvider({ children }: { children: ReactNode }) {
   );
 
   const logout = useCallback(async () => {
-    if (window.leeadman?.accountLogout) {
-      await window.leeadman.accountLogout();
+    if (window.cadence?.accountLogout) {
+      await window.cadence.accountLogout();
     } else {
       writeDevSession(null);
     }
@@ -235,8 +238,8 @@ export function AccountProvider({ children }: { children: ReactNode }) {
       if (oldPassword === newPassword) {
         return { ok: false as const, error: 'New password must be different from the current one.' };
       }
-      if (window.leeadman?.accountChangePassword) {
-        const r = await window.leeadman.accountChangePassword({ oldPassword, newPassword });
+      if (window.cadence?.accountChangePassword) {
+        const r = await window.cadence.accountChangePassword({ oldPassword, newPassword });
         return r?.ok ? { ok: true as const } : { ok: false as const, error: r?.error ?? 'Could not change password.' };
       }
       // Browser dev fallback: verify against stored PBKDF2 hash, then rotate.
@@ -254,6 +257,31 @@ export function AccountProvider({ children }: { children: ReactNode }) {
     [user],
   );
 
+  const verifyPassword = useCallback(
+    async (password: string) => {
+      if (typeof password !== 'string' || !password) {
+        return { ok: false as const, error: 'Account password is required.' };
+      }
+      if (window.cadence?.accountVerifyPassword) {
+        const r = await window.cadence.accountVerifyPassword({ password });
+        return r?.ok
+          ? { ok: true as const }
+          : { ok: false as const, error: r?.error ?? 'Could not verify account password.' };
+      }
+      // Browser dev fallback: verify against stored PBKDF2 hash for the
+      // currently signed-in user.
+      if (!user) return { ok: false as const, error: 'Not signed in.' };
+      const { users } = await readDevAccounts();
+      const u = users.find((x) => x.id === user.id);
+      if (!u) return { ok: false as const, error: 'Account not found.' };
+      const ok = await pbkdf2VerifyPassword(password, u.saltB64, u.hashB64);
+      return ok
+        ? { ok: true as const }
+        : { ok: false as const, error: 'Incorrect account password.' };
+    },
+    [user],
+  );
+
   const v = useMemo(
     () => ({
       user,
@@ -263,11 +291,12 @@ export function AccountProvider({ children }: { children: ReactNode }) {
       register,
       logout,
       changePassword,
+      verifyPassword,
       hasElectronAccounts: electron,
       hasLegacyData,
       refreshLegacyHint,
     }),
-    [user, loading, refresh, login, register, logout, changePassword, electron, hasLegacyData, refreshLegacyHint],
+    [user, loading, refresh, login, register, logout, changePassword, verifyPassword, electron, hasLegacyData, refreshLegacyHint],
   );
 
   return <AccountCtx.Provider value={v}>{children}</AccountCtx.Provider>;

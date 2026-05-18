@@ -1,8 +1,8 @@
 {
-  "name": "Leeadman",
-  "short_name": "Leeadman",
-  "description": "Local-first leadership workspace — teams, people, tasks, notes and goals.",
-  "id": "/leeadman/",
+  "name": "Cadence",
+  "short_name": "Cadence",
+  "description": "Local-first workspace — people, tasks, notes, goals and reminders.",
+  "id": "/cadence/",
   "start_url": "./?source=pwa",
   "scope": "./",
   "display": "standalone",

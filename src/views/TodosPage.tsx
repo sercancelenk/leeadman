@@ -45,10 +45,13 @@ function ringStyle(groupId: string): CSSProperties {
   return { ['--todo-ring' as string]: `hsl(${hashHue(groupId)} 62% 46%)` };
 }
 
-const LS_TODO_SECTIONS = 'leeadman.todos.sectionsOpen.v1';
-const LS_TODO_SHOW_ARCHIVED = 'leeadman.todos.showArchived.v1';
-const LS_TODO_HIDE_DONE = 'leeadman.todos.hideDone.v1';
-const LS_TODO_SORT_MODE = 'leeadman.todos.sortMode.v1';
+// localStorage keys for to-do view preferences. Keep the legacy `leeadman.*`
+// prefix-replacement at write-time only — the migration shim already copied
+// any pre-rename values into the new `cadence.*` keys at app boot.
+const LS_TODO_SECTIONS = 'cadence.todos.sectionsOpen.v1';
+const LS_TODO_SHOW_ARCHIVED = 'cadence.todos.showArchived.v1';
+const LS_TODO_HIDE_DONE = 'cadence.todos.hideDone.v1';
+const LS_TODO_SORT_MODE = 'cadence.todos.sortMode.v1';
 
 function todoSectionsStorageKey(userId: string) {
   return `${LS_TODO_SECTIONS}:${userId}`;

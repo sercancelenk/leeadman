@@ -38,7 +38,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const bootSettled = useRef(false);
 
   const refresh = useCallback(async () => {
-    const api = window.leeadman;
+    const api = window.cadence;
     if (!api?.authStatus) {
       setPinEnabled(false);
       if (!bootSettled.current) {
@@ -69,7 +69,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [refresh]);
 
   const unlockWithPin = useCallback(async (pin: string) => {
-    const r = await window.leeadman?.authVerify?.({ pin });
+    const r = await window.cadence?.authVerify?.({ pin });
     if (r?.ok) {
       setPhase('open');
       return true;
@@ -108,7 +108,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const [diag, setDiag] = useState<string>('');
 
   const loadDiag = useCallback(async () => {
-    const api = window.leeadman;
+    const api = window.cadence;
     const lines: string[] = [];
     try {
       const s = await api?.authStatus?.();
@@ -150,7 +150,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
     setRecoveryErr('');
     setRecoveryBusy(true);
     try {
-      const r = await window.leeadman?.authResetWithAccountPassword?.({ password: recoveryPwd });
+      const r = await window.cadence?.authResetWithAccountPassword?.({ password: recoveryPwd });
       if (!r) {
         setRecoveryErr('Recovery is only available in the desktop app.');
         return;
@@ -179,7 +179,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
     return (
       <div className="auth-screen">
         <div className="auth-card">
-          <h1 className="auth-card__title">Leeadman</h1>
+          <h1 className="auth-card__title">Cadence</h1>
           {!recovering ? (
             <>
               <p className="muted">PIN protection is enabled on this device. Enter your PIN to continue.</p>

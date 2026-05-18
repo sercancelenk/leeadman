@@ -32,7 +32,7 @@ export function AppSidebar({ collapsed }: Props) {
         <span className="app-sidebar__logo" aria-hidden />
         {!collapsed ? (
           <div className="app-sidebar__brand-text">
-            <span className="app-sidebar__title">Leeadman</span>
+            <span className="app-sidebar__title">Cadence</span>
             <span className="app-sidebar__subtitle">Leadership workspace</span>
           </div>
         ) : null}

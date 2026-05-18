@@ -1,5 +1,5 @@
 // Tiny UUID helper that replaces the `uuid` npm package (~10 KB minified).
-// Every modern target Leeadman ships to has `crypto.randomUUID()`:
+// Every modern target Cadence ships to has `crypto.randomUUID()`:
 //   - Electron renderer (Chromium ≥ 92)        — yes
 //   - Electron main process  (Node 16+)        — yes (we run Node 20)
 //   - PWA browsers (Chrome 92+, Firefox 95+, Safari 15.4+) — yes

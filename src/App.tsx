@@ -38,7 +38,7 @@ const isFileProtocol =
   typeof window !== 'undefined' && window.location.protocol === 'file:';
 const HistoryRouter = isFileProtocol ? HashRouter : BrowserRouter;
 /**
- * On GitHub Pages the app is served from `/leeadman/`. Without a basename the
+ * On GitHub Pages the app is served from `/cadence/`. Without a basename the
  * React Router would push `/login` etc. directly under the domain root and the
  * browser would 404 on hard refreshes / SW takeovers. Vite already exposes the
  * configured `base` via `import.meta.env.BASE_URL`, so we just trim the

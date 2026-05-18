@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAppData } from '../AppDataContext';
+import { useAccount } from '../AccountContext';
 import { MarkdownEditor } from '../components/ui/MarkdownEditor';
 import { IcLock, IcPlus, IcStar, IcTrash } from '../components/icons';
 import { useNotesUnlock } from '../lib/NotesUnlockContext';
@@ -8,12 +9,16 @@ import {
   decryptBodyWithMaster,
   encryptBodyWithMaster,
   unlockMaster,
+  unwrapPassphraseFromRecovery,
+  wrapPassphraseForRecovery,
 } from '../lib/notesCrypto';
-import type { Note } from '../model';
+import type { Note, NotesLock } from '../model';
 
 const PLACEHOLDER_TITLE = 'New note';
 
 type PendingIntent = 'lock' | 'unlock-selected' | 'disable-locking' | 'view';
+
+const FORCE_RESET_PHRASE = 'DELETE LOCKED NOTES';
 
 /**
  * macOS-Notes-style two-pane view. Left rail lists every note (title +
@@ -46,6 +51,7 @@ type PendingIntent = 'lock' | 'unlock-selected' | 'disable-locking' | 'view';
 export function NotesPage() {
   const { data, addNote, patchNote, replaceNote, removeNote, setNotesLock, update } = useAppData();
   const unlock = useNotesUnlock();
+  const account = useAccount();
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [setupOpen, setSetupOpen] = useState(false);
@@ -56,11 +62,33 @@ export function NotesPage() {
 
   const [setupPw1, setSetupPw1] = useState('');
   const [setupPw2, setSetupPw2] = useState('');
+  /** Optional recovery wrap during setup: encrypt the Notes passphrase with
+   *  the account password so the user can recover from a forgotten passphrase. */
+  const [setupEnableRecovery, setSetupEnableRecovery] = useState(true);
+  const [setupAccountPw, setSetupAccountPw] = useState('');
   const [unlockPw, setUnlockPw] = useState('');
   const [setupErr, setSetupErr] = useState<string | null>(null);
   const [unlockErr, setUnlockErr] = useState<string | null>(null);
   const [disableErr, setDisableErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /** Force-reset escape hatch: shown inside the unlock dialog when the user
+   *  has tried-and-failed at least once. They have to type the literal
+   *  FORCE_RESET_PHRASE to confirm — there's no recovery for the locked
+   *  notes after this, but it prevents an unrecoverable workspace. */
+  const [forceResetOpen, setForceResetOpen] = useState(false);
+  const [forceResetInput, setForceResetInput] = useState('');
+  /** Account-password recovery flow ("Forgot passphrase?"): user enters
+   *  their account password, we unwrap the Notes passphrase and unlock. */
+  const [recoverOpen, setRecoverOpen] = useState(false);
+  const [recoverPw, setRecoverPw] = useState('');
+  const [recoverErr, setRecoverErr] = useState<string | null>(null);
+  /** Add-recovery-to-existing-lock flow: user enters current Notes
+   *  passphrase AND account password to attach a recovery envelope to a
+   *  workspace lock that doesn't have one yet. */
+  const [addRecoveryOpen, setAddRecoveryOpen] = useState(false);
+  const [addRecoveryNotesPw, setAddRecoveryNotesPw] = useState('');
+  const [addRecoveryAccountPw, setAddRecoveryAccountPw] = useState('');
+  const [addRecoveryErr, setAddRecoveryErr] = useState<string | null>(null);
 
   /** Plaintext for the currently-displayed note (keyed by id to survive our
    *  own re-encryption re-renders). */
@@ -319,14 +347,34 @@ export function NotesPage() {
       setSetupErr('Passphrases do not match.');
       return;
     }
+    const wantsRecovery = setupEnableRecovery;
+    const accountPw = setupAccountPw;
+    if (wantsRecovery && !accountPw) {
+      setSetupErr('Enter your account password (or untick "Enable recovery").');
+      return;
+    }
     setBusy(true);
     try {
+      // Verify the account password BEFORE we wrap with it — otherwise a
+      // typo here would silently produce an unwrappable recovery envelope
+      // that the user would only discover when they actually need it.
+      let recovery: NotesLock['recovery'] | undefined;
+      if (wantsRecovery) {
+        const v = await account.verifyPassword(accountPw);
+        if (!v.ok) {
+          setSetupErr(v.error ?? 'Could not verify account password.');
+          return;
+        }
+        recovery = await wrapPassphraseForRecovery(a, accountPw);
+      }
       const { lock, masterKey } = await createNotesLock(a);
-      setNotesLock(lock);
+      const fullLock: NotesLock = recovery ? { ...lock, recovery } : lock;
+      setNotesLock(fullLock);
       unlock.remember(masterKey);
       setSetupOpen(false);
       setSetupPw1('');
       setSetupPw2('');
+      setSetupAccountPw('');
       const intent = pendingIntent;
       setPendingIntent(null);
       // CRITICAL: pass the freshly-derived key directly. Reading it back via
@@ -339,6 +387,117 @@ export function NotesPage() {
       setBusy(false);
     }
   };
+
+  /**
+   * "Forgot passphrase?" recovery path. The user enters their account
+   * password; we use it to unwrap the Notes passphrase stored in
+   * `notesLock.recovery`, then derive the master key from that passphrase
+   * normally. Same trust boundary as the original passphrase — no notes are
+   * decrypted by the account password directly.
+   */
+  const submitRecover = async () => {
+    setRecoverErr(null);
+    if (!data.notesLock?.recovery) {
+      setRecoverErr('There is no recovery envelope on this workspace.');
+      return;
+    }
+    const accountPw = recoverPw;
+    if (!accountPw) return;
+    setBusy(true);
+    try {
+      const passphrase = await unwrapPassphraseFromRecovery(data.notesLock.recovery, accountPw);
+      if (!passphrase) {
+        setRecoverErr('That account password is not correct (or the recovery envelope is corrupt).');
+        return;
+      }
+      const key = await unlockMaster(passphrase, data.notesLock);
+      if (!key) {
+        // Shouldn't happen unless somebody tampered with the file — the
+        // recovery envelope decrypted but the resulting passphrase doesn't
+        // match the master key verifier.
+        setRecoverErr('Recovery envelope decrypted but the passphrase did not unlock the notes.');
+        return;
+      }
+      unlock.remember(key);
+      setRecoverOpen(false);
+      setRecoverPw('');
+      setUnlockOpen(false);
+      setUnlockPw('');
+      const intent = pendingIntent;
+      setPendingIntent(null);
+      if (intent === 'disable-locking') {
+        setConfirmDisableLock(true);
+        return;
+      }
+      if (intent) await performAction(intent, key, selected);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * Attach a recovery envelope to a workspace lock that doesn't have one
+   * yet. We need both the current Notes passphrase (to confirm the user
+   * really knows it — otherwise anyone with brief physical access could
+   * register an attacker-controlled recovery) and the account password
+   * (so the wrap actually works).
+   */
+  const submitAddRecovery = async () => {
+    setAddRecoveryErr(null);
+    if (!data.notesLock) {
+      setAddRecoveryErr('There is no Notes passphrase to recover.');
+      return;
+    }
+    const notesPw = addRecoveryNotesPw;
+    const accountPw = addRecoveryAccountPw;
+    if (!notesPw || !accountPw) return;
+    setBusy(true);
+    try {
+      const key = await unlockMaster(notesPw, data.notesLock);
+      if (!key) {
+        setAddRecoveryErr('That is not the current Notes passphrase.');
+        return;
+      }
+      const v = await account.verifyPassword(accountPw);
+      if (!v.ok) {
+        setAddRecoveryErr(v.error ?? 'Incorrect account password.');
+        return;
+      }
+      const recovery = await wrapPassphraseForRecovery(notesPw, accountPw);
+      setNotesLock({ ...data.notesLock, recovery });
+      // Remember the verified master key while we're at it — they just
+      // proved they know the passphrase, no reason to ask again this session.
+      unlock.remember(key);
+      setAddRecoveryOpen(false);
+      setAddRecoveryNotesPw('');
+      setAddRecoveryAccountPw('');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * Nuclear option: drop the workspace lock AND delete every note that's
+   * still locked, without ever decrypting them. Used when the user has
+   * permanently lost their passphrase. We gate it behind typing a literal
+   * confirmation phrase so it can't be triggered by an accidental click.
+   */
+  const forceReset = useCallback(() => {
+    update((d) => {
+      const nextNotes = d.notes.filter((n) => !n.locked);
+      const { notesLock: _drop, ...rest } = d;
+      return { ...(rest as typeof d), notes: nextNotes };
+    });
+    setNotesLock(undefined);
+    unlock.clear();
+    setForceResetOpen(false);
+    setForceResetInput('');
+    setUnlockOpen(false);
+    setConfirmDisableLock(false);
+    setPendingIntent(null);
+    setUnlockErr(null);
+    setUnlockPw('');
+  }, [update, setNotesLock, unlock]);
 
   const submitUnlock = async () => {
     setUnlockErr(null);
@@ -357,6 +516,14 @@ export function NotesPage() {
       setUnlockPw('');
       const intent = pendingIntent;
       setPendingIntent(null);
+      // For destructive intents (remove the workspace lock entirely) we
+      // show the confirm dialog AFTER unlocking — the user has now proven
+      // they know the passphrase, and we can run the irreversible
+      // operation only when they explicitly approve it.
+      if (intent === 'disable-locking') {
+        setConfirmDisableLock(true);
+        return;
+      }
       // Same reason as in submitSetup: hand the freshly-derived key through.
       if (intent) await performAction(intent, key, selected);
     } finally {
@@ -367,6 +534,7 @@ export function NotesPage() {
   // ----- RENDER ----------------------------------------------------------
 
   const hasLock = !!data.notesLock;
+  const hasRecovery = !!data.notesLock?.recovery;
 
   return (
     <div className="notes-page">
@@ -374,12 +542,41 @@ export function NotesPage() {
         <header className="notes-page__sidebar-header">
           <h2>Notes</h2>
           <div className="notes-page__sidebar-actions">
+            {hasLock && !hasRecovery ? (
+              <button
+                type="button"
+                className="btn btn--sm btn--ghost"
+                onClick={() => {
+                  setAddRecoveryErr(null);
+                  setAddRecoveryNotesPw('');
+                  setAddRecoveryAccountPw('');
+                  setAddRecoveryOpen(true);
+                }}
+                title="Allow recovery using your account password"
+              >
+                Add recovery
+              </button>
+            ) : null}
             {hasLock ? (
               <button
                 type="button"
                 className="btn btn--sm btn--ghost"
                 onClick={() => {
+                  // Force-unlock the session first if we don't have the key —
+                  // showing the destructive confirm dialog ON TOP of the
+                  // passphrase prompt would stack two backdrops and the user
+                  // could never get to the input. Once we have the key (either
+                  // already remembered or freshly derived by submitUnlock),
+                  // the confirm dialog opens cleanly.
                   setDisableErr(null);
+                  const key = unlock.read();
+                  if (!key) {
+                    setUnlockErr(null);
+                    setUnlockPw('');
+                    setPendingIntent('disable-locking');
+                    setUnlockOpen(true);
+                    return;
+                  }
                   setConfirmDisableLock(true);
                 }}
                 title="Remove the Notes passphrase from this workspace"
@@ -526,6 +723,7 @@ export function NotesPage() {
             setPendingIntent(null);
             setSetupPw1('');
             setSetupPw2('');
+            setSetupAccountPw('');
             setSetupErr(null);
           }}
           footer={
@@ -538,10 +736,6 @@ export function NotesPage() {
             This passphrase is required to lock and unlock notes. It's <strong>different from your account
             password</strong> and is <strong>never stored on disk</strong> — only a verifier blob is saved, used to
             check whether the passphrase you type later is correct.
-          </p>
-          <p className="text-warn">
-            If you forget this passphrase, locked notes <strong>cannot be recovered</strong>. There is no reset path
-            on purpose — that's the whole point of at-rest encryption.
           </p>
           <label className="field">
             <span>Passphrase</span>
@@ -563,10 +757,44 @@ export function NotesPage() {
               onChange={(e) => setSetupPw2(e.target.value)}
               autoComplete="new-password"
               onKeyDown={(e) => {
-                if (e.key === 'Enter') void submitSetup();
+                if (e.key === 'Enter' && !setupEnableRecovery) void submitSetup();
               }}
             />
           </label>
+          <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <input
+              type="checkbox"
+              checked={setupEnableRecovery}
+              onChange={(e) => setSetupEnableRecovery(e.target.checked)}
+            />
+            <span>Enable recovery using my account password (recommended)</span>
+          </label>
+          {setupEnableRecovery ? (
+            <>
+              <p style={{ fontSize: 12, opacity: 0.8 }}>
+                We'll wrap this passphrase with a key derived from your account password and store the encrypted
+                blob alongside the verifier. If you forget the Notes passphrase, you can recover by entering your
+                account password. The strongest of the two passwords is what protects your notes at rest.
+              </p>
+              <label className="field">
+                <span>Account password</span>
+                <input
+                  type="password"
+                  className="input"
+                  value={setupAccountPw}
+                  onChange={(e) => setSetupAccountPw(e.target.value)}
+                  autoComplete="current-password"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void submitSetup();
+                  }}
+                />
+              </label>
+            </>
+          ) : (
+            <p className="text-warn">
+              Without recovery: if you forget this passphrase, locked notes <strong>cannot be recovered</strong>.
+            </p>
+          )}
           {setupErr ? <p className="text-error">{setupErr}</p> : null}
         </NotesDialog>
       ) : null}
@@ -603,6 +831,181 @@ export function NotesPage() {
             />
           </label>
           {unlockErr ? <p className="text-error">{unlockErr}</p> : null}
+          {/* "Forgot?" routes to whichever recovery path is available:
+              if a recovery envelope was set up, the account-password
+              recovery dialog; otherwise the destructive force-reset. */}
+          <p style={{ marginTop: 12, fontSize: 12 }}>
+            <button
+              type="button"
+              className="btn btn--ghost btn--sm"
+              onClick={() => {
+                if (data.notesLock?.recovery) {
+                  setRecoverErr(null);
+                  setRecoverPw('');
+                  setRecoverOpen(true);
+                } else {
+                  setForceResetOpen(true);
+                }
+              }}
+            >
+              Forgot passphrase?
+            </button>
+          </p>
+        </NotesDialog>
+      ) : null}
+
+      {recoverOpen ? (
+        <NotesDialog
+          title="Recover with your account password"
+          icon={<IcLock size={18} />}
+          onClose={() => {
+            setRecoverOpen(false);
+            setRecoverPw('');
+            setRecoverErr(null);
+          }}
+          footer={
+            <button
+              type="button"
+              className="btn btn--primary"
+              onClick={submitRecover}
+              disabled={busy || !recoverPw}
+            >
+              {busy ? 'Recovering…' : 'Recover & unlock'}
+            </button>
+          }
+        >
+          <p>
+            Enter your <strong>account password</strong> (the one you log in with). We'll use it to decrypt the
+            Notes passphrase that was stored at setup time, then unlock the workspace.
+          </p>
+          <label className="field">
+            <span>Account password</span>
+            <input
+              type="password"
+              className="input"
+              value={recoverPw}
+              onChange={(e) => setRecoverPw(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void submitRecover();
+              }}
+              autoFocus
+              autoComplete="current-password"
+            />
+          </label>
+          {recoverErr ? <p className="text-error">{recoverErr}</p> : null}
+          <p style={{ marginTop: 12, fontSize: 12 }}>
+            <button
+              type="button"
+              className="btn btn--ghost btn--sm"
+              onClick={() => {
+                setRecoverOpen(false);
+                setRecoverPw('');
+                setRecoverErr(null);
+                setForceResetOpen(true);
+              }}
+            >
+              Account password also lost? Delete locked notes &amp; reset
+            </button>
+          </p>
+        </NotesDialog>
+      ) : null}
+
+      {addRecoveryOpen ? (
+        <NotesDialog
+          title="Add account-password recovery"
+          icon={<IcLock size={18} />}
+          onClose={() => {
+            setAddRecoveryOpen(false);
+            setAddRecoveryNotesPw('');
+            setAddRecoveryAccountPw('');
+            setAddRecoveryErr(null);
+          }}
+          footer={
+            <button
+              type="button"
+              className="btn btn--primary"
+              onClick={submitAddRecovery}
+              disabled={busy || !addRecoveryNotesPw || !addRecoveryAccountPw}
+            >
+              {busy ? 'Saving…' : 'Enable recovery'}
+            </button>
+          }
+        >
+          <p>
+            Add a recovery path so a forgotten Notes passphrase can be recovered using your account password.
+            We need both the current Notes passphrase (to confirm it's you) and your account password (so the
+            wrap actually works).
+          </p>
+          <label className="field">
+            <span>Current Notes passphrase</span>
+            <input
+              type="password"
+              className="input"
+              value={addRecoveryNotesPw}
+              onChange={(e) => setAddRecoveryNotesPw(e.target.value)}
+              autoFocus
+              autoComplete="current-password"
+            />
+          </label>
+          <label className="field">
+            <span>Account password</span>
+            <input
+              type="password"
+              className="input"
+              value={addRecoveryAccountPw}
+              onChange={(e) => setAddRecoveryAccountPw(e.target.value)}
+              autoComplete="current-password"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void submitAddRecovery();
+              }}
+            />
+          </label>
+          {addRecoveryErr ? <p className="text-error">{addRecoveryErr}</p> : null}
+        </NotesDialog>
+      ) : null}
+
+      {forceResetOpen ? (
+        <NotesDialog
+          title="Forgot the Notes passphrase?"
+          icon={<IcLock size={18} />}
+          onClose={() => {
+            setForceResetOpen(false);
+            setForceResetInput('');
+          }}
+          footer={
+            <button
+              type="button"
+              className="btn btn--danger"
+              onClick={forceReset}
+              disabled={forceResetInput !== FORCE_RESET_PHRASE}
+            >
+              Delete locked notes &amp; reset
+            </button>
+          }
+        >
+          <p>
+            There is no recovery path for the Notes passphrase — that's the whole point of at-rest encryption.
+            If you proceed, we will:
+          </p>
+          <ul>
+            <li>Permanently delete every note that's currently locked (ciphertext gone, unrecoverable).</li>
+            <li>Remove the workspace passphrase so you can start fresh.</li>
+            <li>Leave every plaintext note untouched.</li>
+          </ul>
+          <p className="text-warn">
+            This cannot be undone. Type <code>{FORCE_RESET_PHRASE}</code> below to confirm.
+          </p>
+          <label className="field">
+            <span>Confirmation</span>
+            <input
+              type="text"
+              className="input"
+              value={forceResetInput}
+              onChange={(e) => setForceResetInput(e.target.value)}
+              placeholder={FORCE_RESET_PHRASE}
+              autoFocus
+            />
+          </label>
         </NotesDialog>
       ) : null}
 
@@ -641,7 +1044,24 @@ export function NotesPage() {
             <button
               type="button"
               className="btn btn--danger"
-              onClick={() => requestAction('disable-locking')}
+              onClick={() => {
+                // By construction the confirm dialog is only ever shown
+                // AFTER the workspace has been unlocked, so the master key
+                // is always available here — call performAction directly
+                // and skip the requestAction dispatch logic.
+                const key = unlock.read();
+                if (!key) {
+                  // Edge case: lock cleared in another window between
+                  // unlock and confirm. Fall back to the prompt.
+                  setUnlockErr(null);
+                  setUnlockPw('');
+                  setPendingIntent('disable-locking');
+                  setConfirmDisableLock(false);
+                  setUnlockOpen(true);
+                  return;
+                }
+                void performAction('disable-locking', key, null);
+              }}
               disabled={busy}
             >
               {busy ? 'Decrypting…' : 'Remove passphrase'}
@@ -655,7 +1075,24 @@ export function NotesPage() {
           <p className="text-warn">
             We will refuse to proceed if even one locked note fails to decrypt — your data will be left unchanged.
           </p>
-          {disableErr ? <p className="text-error">{disableErr}</p> : null}
+          {disableErr ? (
+            <>
+              <p className="text-error">{disableErr}</p>
+              {/* If decryption fails here, the user is stuck — their
+                  notesLock no longer matches the per-note ciphertext.
+                  Offer the same nuclear escape hatch as the unlock dialog
+                  so the workspace can be recovered. */}
+              <p style={{ marginTop: 12, fontSize: 12 }}>
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--sm"
+                  onClick={() => setForceResetOpen(true)}
+                >
+                  Can't recover? Delete locked notes &amp; reset
+                </button>
+              </p>
+            </>
+          ) : null}
         </NotesDialog>
       ) : null}
     </div>

@@ -3,6 +3,7 @@ import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { IcPlus } from '../components/icons';
 import { Button } from '../components/ui/Button';
 import { useAccount } from '../AccountContext';
+import { STORAGE_PREFIX } from '../lib/appBranding';
 
 export function RegisterPage() {
   const { user, loading, register, hasLegacyData, refreshLegacyHint } = useAccount();
@@ -51,7 +52,7 @@ export function RegisterPage() {
             }
             const r = await register({ email, password, displayName, migrateLegacy: hasLegacyData ? migrateLegacy : false });
             if (r.ok) {
-              if (displayName.trim()) sessionStorage.setItem('leeadman-profile-seed', displayName.trim());
+              if (displayName.trim()) sessionStorage.setItem(`${STORAGE_PREFIX}-profile-seed`, displayName.trim());
               navigate('/', { replace: true });
             } else setErr(r.error ?? 'Sign-up failed.');
             if (r.warn) window.alert(r.warn);
@@ -116,7 +117,7 @@ export function RegisterPage() {
           {hasLegacyData ? (
             <label className="row" style={{ gap: 8, marginTop: 4 }}>
               <input type="checkbox" checked={migrateLegacy} onChange={(e) => setMigrateLegacy(e.target.checked)} />
-              <span className="small">Import legacy single-file data (leeadman-data.json) into this account</span>
+              <span className="small">Import legacy single-file data (leeadman-data.json from the pre-rename build) into this account</span>
             </label>
           ) : null}
           {err ? <p className="auth-err">{err}</p> : null}

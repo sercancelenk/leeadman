@@ -71,12 +71,18 @@ export type CacheClearResult =
 
 interface ImportMetaEnv {
   /** "1" when the bundle is built for the PWA (GitHub Pages) target. */
+  readonly CADENCE_PWA?: string;
+  /** @deprecated Old name retained during the Leeadman → Cadence rename. */
   readonly LEEADMAN_PWA?: string;
 }
 
-declare global {
-  interface Window {
-    leeadman?: {
+/**
+ * Electron IPC surface. Exposed under both `window.cadence` (canonical, new
+ * name) and `window.leeadman` (legacy alias kept during the rename so the
+ * renderer doesn't need a full sweep). New renderer code should use
+ * `window.cadence`.
+ */
+interface CadenceApi {
       loadData: () => Promise<unknown>;
       loadDataResult?: () => Promise<LoadResult>;
       saveData: (data: unknown) => Promise<boolean>;
@@ -112,6 +118,7 @@ declare global {
         oldPassword: string;
         newPassword: string;
       }) => Promise<{ ok: boolean; error?: string }>;
+      accountVerifyPassword: (payload: { password: string }) => Promise<{ ok: boolean; error?: string }>;
       syncStatus: () => Promise<{
         enabled: boolean;
         running: boolean;
@@ -128,6 +135,12 @@ declare global {
       }>;
       syncDisable: () => Promise<{ ok: boolean }>;
       syncRotateToken: () => Promise<{ ok: boolean; token?: string }>;
-    };
+}
+
+declare global {
+  interface Window {
+    cadence?: CadenceApi;
+    /** @deprecated Old name; prefer `window.cadence`. Same object underneath. */
+    leeadman?: CadenceApi;
   }
 }
