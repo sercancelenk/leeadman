@@ -166,6 +166,82 @@ export function IcLock(p: IconProps) {
   );
 }
 
+export function IcUnlock(p: IconProps) {
+  const { s, cn, sw, rest } = split(p);
+  return (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden className={cn} {...rest}>
+      <rect x="3" y="11" width="18" height="11" rx="2" strokeWidth={sw} />
+      <path d="M7 11V7a5 5 0 0 1 9.9-1" strokeWidth={sw} strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function IcLockOff(p: IconProps) {
+  const { s, cn, sw, rest } = split(p);
+  return (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden className={cn} {...rest}>
+      <rect x="3" y="11" width="18" height="11" rx="2" strokeWidth={sw} />
+      <path d="M7 11V7a5 5 0 0 1 10 0v4" strokeWidth={sw} strokeLinecap="round" />
+      <path d="M3 3l18 18" strokeWidth={sw} strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function IcKey(p: IconProps) {
+  const { s, cn, sw, rest } = split(p);
+  return (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden className={cn} {...rest}>
+      <circle cx="8" cy="15" r="4" strokeWidth={sw} />
+      <path d="M10.85 12.15L21 2M15 6l3 3M19 4l3 3" strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+export function IcEye(p: IconProps) {
+  const { s, cn, sw, rest } = split(p);
+  return (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden className={cn} {...rest}>
+      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z" strokeWidth={sw} strokeLinejoin="round" />
+      <circle cx="12" cy="12" r="3" strokeWidth={sw} />
+    </svg>
+  );
+}
+
+export function IcEyeOff(p: IconProps) {
+  const { s, cn, sw, rest } = split(p);
+  return (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden className={cn} {...rest}>
+      <path
+        d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a19.6 19.6 0 0 1 5.06-5.94M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 11 8 11 8a19.6 19.6 0 0 1-2.16 3.19M14.12 14.12A3 3 0 1 1 9.88 9.88M1 1l22 22"
+        strokeWidth={sw}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+export function IcMoreVertical(p: IconProps) {
+  const { s, cn, sw, rest } = split(p);
+  return (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden className={cn} {...rest}>
+      <circle cx="12" cy="5" r="1.4" strokeWidth={sw} />
+      <circle cx="12" cy="12" r="1.4" strokeWidth={sw} />
+      <circle cx="12" cy="19" r="1.4" strokeWidth={sw} />
+    </svg>
+  );
+}
+
+export function IcSearch(p: IconProps) {
+  const { s, cn, sw, rest } = split(p);
+  return (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden className={cn} {...rest}>
+      <circle cx="11" cy="11" r="7" strokeWidth={sw} />
+      <path d="M21 21l-4.3-4.3" strokeWidth={sw} strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export function IcListTodo(p: IconProps) {
   const { s, cn, sw, rest } = split(p);
   return (

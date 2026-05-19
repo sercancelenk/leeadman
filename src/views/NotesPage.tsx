@@ -2,7 +2,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAppData } from '../AppDataContext';
 import { useAccount } from '../AccountContext';
 import { MarkdownEditor } from '../components/ui/MarkdownEditor';
-import { IcLock, IcPlus, IcStar, IcTrash } from '../components/icons';
+import {
+  IcEyeOff,
+  IcKey,
+  IcLock,
+  IcLockOff,
+  IcPlus,
+  IcStar,
+  IcTrash,
+  IcUnlock,
+} from '../components/icons';
 import { useNotesUnlock } from '../lib/NotesUnlockContext';
 import {
   createNotesLock,
@@ -16,6 +25,16 @@ import type { Note, NotesLock } from '../model';
 
 const PLACEHOLDER_TITLE = 'New note';
 
+/**
+ * What the user is trying to do when we prompt for the passphrase.
+ *
+ *   - 'view'              – temporarily decrypt for reading; note stays locked
+ *   - 'lock'              – encrypt the current note body and mark it locked
+ *   - 'unlock-selected'   – PERMANENTLY remove the lock from the selected note
+ *                           (decrypts to plaintext on disk)
+ *   - 'disable-locking'   – remove the workspace-wide passphrase, decrypting
+ *                           every locked note back to plaintext on disk
+ */
 type PendingIntent = 'lock' | 'unlock-selected' | 'disable-locking' | 'view';
 
 const FORCE_RESET_PHRASE = 'DELETE LOCKED NOTES';
@@ -28,6 +47,28 @@ const FORCE_RESET_PHRASE = 'DELETE LOCKED NOTES';
  * `CryptoKey` (PBKDF2-SHA-256, 200k iters) once per session. Locked notes
  * encrypt with that cached key + a fresh IV per save — sub-millisecond, so
  * re-encryption per keystroke is fine.
+ *
+ * **Strict per-note unlock UX (the user's expectation):**
+ *
+ *   Locking a note must HIDE its content AND require the passphrase to be
+ *   re-entered before that content can be seen again. Concretely:
+ *
+ *     - Clicking **Lock** encrypts the body, clears the in-memory plaintext
+ *       (`decrypted`), AND drops the session master key (`unlock.clear()`).
+ *     - Clicking **Hide** on a viewed locked note clears the plaintext AND
+ *       drops the session key for the same reason.
+ *     - Clicking **Unlock to view** ALWAYS prompts for the passphrase,
+ *       even if the session master key is still cached from an earlier
+ *       unlock. We `unlock.clear()` right before opening the prompt in
+ *       `requestAction('view')` to enforce this. Otherwise navigating
+ *       away from a viewed locked note (which only clears `decrypted`,
+ *       not the session key) and clicking "Unlock to view" again would
+ *       silently re-decrypt the body — exactly the "I locked it but it's
+ *       still readable" surprise we want to avoid.
+ *
+ *   We deliberately never auto-decrypt on selection, so even if some other
+ *   path leaves a session key in memory, locked notes still render the
+ *   "🔒 Locked" screen until the user explicitly unlocks them.
  *
  * Implementation notes worth keeping in your head when editing this file:
  *
@@ -128,30 +169,24 @@ export function NotesPage() {
         : ''
       : selected.body;
 
-  // ----- DECRYPT WHEN SELECTION CHANGES ---------------------------------
-
-  // Only decrypts when we don't already hold plaintext for the selected id.
-  // This short-circuits the re-render caused by our own keystroke saves.
+  // ----- CLEAR CACHED PLAINTEXT WHEN SELECTION CHANGES ------------------
+  //
+  // STRICT LOCK BEHAVIOUR: we deliberately do NOT auto-decrypt a locked
+  // note here even if `unlock.read()` would return a usable master key.
+  // The user has to click "Unlock to view" on every locked note they want
+  // to read — locking a note must reliably hide its contents. The cached
+  // plaintext for a previously-selected note is dropped here so it does
+  // not leak when the user navigates to another locked note.
   useEffect(() => {
     if (!selected) {
       setDecrypted(null);
       return;
     }
-    if (!selected.locked) return;
-    if (decrypted?.noteId === selected.id) return;
-    if (!selected.cipher) return;
-    const key = unlock.read();
-    if (!key) return;
-    let cancelled = false;
-    void (async () => {
-      const body = await decryptBodyWithMaster(key, selected.cipher!);
-      if (cancelled) return;
-      if (body !== null) setDecrypted({ noteId: selected.id, body });
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [selected, unlock.masterKey, decrypted?.noteId]);
+    if (decrypted && decrypted.noteId !== selected.id) {
+      setDecrypted(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected?.id]);
 
   // ----- CORE: perform a pending action with an EXPLICIT key -------------
 
@@ -165,10 +200,24 @@ export function NotesPage() {
     async (intent: PendingIntent, key: CryptoKey, targetNote: Note | null) => {
       switch (intent) {
         case 'view': {
-          // Nothing to do; the decrypt useEffect picks it up on next render.
+          // Decrypts the selected locked note into the in-memory `decrypted`
+          // cache so the editor can render it. The note's on-disk `locked`
+          // flag stays true — the plaintext lives only in this renderer's
+          // memory for the current selection.
           if (targetNote?.locked && targetNote.cipher) {
-            const body = await decryptBodyWithMaster(key, targetNote.cipher);
-            if (body !== null) setDecrypted({ noteId: targetNote.id, body });
+            setBusy(true);
+            try {
+              const body = await decryptBodyWithMaster(key, targetNote.cipher);
+              if (body === null) {
+                setUnlockErr('That passphrase does not unlock this note.');
+                setUnlockOpen(true);
+                setPendingIntent('view');
+                return;
+              }
+              setDecrypted({ noteId: targetNote.id, body });
+            } finally {
+              setBusy(false);
+            }
           }
           return;
         }
@@ -183,6 +232,16 @@ export function NotesPage() {
               : targetNote.body;
             const cipher = await encryptBodyWithMaster(key, bodyToLock);
             replaceNote({ ...targetNote, body: '', locked: true, cipher });
+            // CRITICAL for the strict-lock UX: drop the cached plaintext
+            // immediately so the editor re-renders the "🔒 Locked" screen
+            // instead of continuing to show the body the user just locked.
+            setDecrypted(null);
+            // …and drop the session master key too, so the next "Unlock to
+            // view" reliably prompts for the passphrase. Without this, the
+            // user clicks Lock and then Unlock and the note opens silently
+            // because the workspace key is still cached in memory — which
+            // is exactly the "lock didn't really lock" bug.
+            unlock.clear();
           } finally {
             setBusy(false);
           }
@@ -250,10 +309,23 @@ export function NotesPage() {
   // ----- BUTTON HANDLERS ------------------------------------------------
 
   /** Open the right passphrase dialog for the given intent, or call
-   *  performAction immediately when we already have the key. */
+   *  performAction immediately when we already have the key.
+   *
+   *  Special-case for `'view'`: every attempt to look at a locked note
+   *  MUST prompt for the Notes passphrase — even if the session master
+   *  key is still cached from an earlier unlock. The user's expectation
+   *  is that locking a note hides it for good, and that they re-prove
+   *  the passphrase each time they want to see it again. Without this,
+   *  navigating away from a viewed locked note and back to it would
+   *  silently re-decrypt the body, which defeats the whole point of
+   *  locking it. We also `unlock.clear()` so any incidental read of the
+   *  cached key elsewhere also sees null after this point. */
   const requestAction = useCallback(
     (intent: PendingIntent) => {
-      const key = unlock.read();
+      if (intent === 'view') {
+        unlock.clear();
+      }
+      const key = intent === 'view' ? null : unlock.read();
       if (key) {
         void performAction(intent, key, selected);
         return;
@@ -314,24 +386,23 @@ export function NotesPage() {
     setConfirmRemoveId(null);
   };
 
-  // ----- AUTO-OPEN UNLOCK DIALOG WHEN A LOCKED NOTE IS SELECTED ----------
+  /**
+   * Re-hide a locked note that the user has temporarily unlocked for
+   * viewing. We drop both the cached plaintext AND the session master key
+   * so that the next "Unlock to view" reliably prompts for the passphrase.
+   * The on-disk note is unchanged — it was already encrypted; only the
+   * in-memory secrets are wiped.
+   */
+  const hideSelected = () => {
+    if (!selected || !selected.locked) return;
+    setDecrypted(null);
+    unlock.clear();
+  };
 
-  // When the selection changes to a locked note and we don't have plaintext
-  // or a master key, open the unlock dialog so the user doesn't have to
-  // click a second button to get to it.
-  useEffect(() => {
-    if (!selected) return;
-    if (!selected.locked) return;
-    if (decrypted?.noteId === selected.id) return;
-    if (unlock.read()) return;
-    if (unlockOpen || setupOpen) return;
-    setUnlockPw('');
-    setUnlockErr(null);
-    setPendingIntent('view');
-    setUnlockOpen(true);
-    // intentional: only re-run on selectedId change
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId]);
+  // No auto-open-unlock-dialog here. The "🔒 Locked" screen in the editor
+  // pane gives the user an explicit "Unlock to view" button — that is the
+  // single, predictable entry point for decrypting any individual note,
+  // so the prompt only ever shows up in direct response to a user click.
 
   // ----- DIALOG SUBMIT HANDLERS -----------------------------------------
 
@@ -543,50 +614,52 @@ export function NotesPage() {
           <h2>Notes</h2>
           <div className="notes-page__sidebar-actions">
             {hasLock && !hasRecovery ? (
-              <button
-                type="button"
-                className="btn btn--sm btn--ghost"
+              <IconButton
                 onClick={() => {
                   setAddRecoveryErr(null);
                   setAddRecoveryNotesPw('');
                   setAddRecoveryAccountPw('');
                   setAddRecoveryOpen(true);
                 }}
-                title="Allow recovery using your account password"
+                label="Add recovery"
+                tooltip="Allow recovery using your account password"
               >
-                Add recovery
-              </button>
+                <IcKey size={16} />
+              </IconButton>
             ) : null}
             {hasLock ? (
-              <button
-                type="button"
-                className="btn btn--sm btn--ghost"
+              <IconButton
                 onClick={() => {
-                  // Force-unlock the session first if we don't have the key —
-                  // showing the destructive confirm dialog ON TOP of the
-                  // passphrase prompt would stack two backdrops and the user
-                  // could never get to the input. Once we have the key (either
-                  // already remembered or freshly derived by submitUnlock),
-                  // the confirm dialog opens cleanly.
+                  // Removing the workspace passphrase is irreversible and
+                  // destructive (it decrypts every locked note back to
+                  // plaintext on disk). We deliberately ALWAYS prompt for
+                  // the Notes passphrase here, even when the master key is
+                  // already cached in this session — re-authenticating the
+                  // user right before such a high-impact change is the
+                  // expected UX and prevents accidental "click-while-the-
+                  // -session-is-still-warm" mistakes.
                   setDisableErr(null);
-                  const key = unlock.read();
-                  if (!key) {
-                    setUnlockErr(null);
-                    setUnlockPw('');
-                    setPendingIntent('disable-locking');
-                    setUnlockOpen(true);
-                    return;
-                  }
-                  setConfirmDisableLock(true);
+                  unlock.clear();
+                  setUnlockErr(null);
+                  setUnlockPw('');
+                  setPendingIntent('disable-locking');
+                  setUnlockOpen(true);
                 }}
-                title="Remove the Notes passphrase from this workspace"
+                label="Remove notes passphrase"
+                tooltip="Remove the Notes passphrase from this workspace"
+                variant="danger"
               >
-                Remove lock
-              </button>
+                <IcLockOff size={16} />
+              </IconButton>
             ) : null}
-            <button type="button" className="btn btn--sm btn--primary" onClick={onCreate} title="New note">
-              <IcPlus size={14} /> New
-            </button>
+            <IconButton
+              onClick={onCreate}
+              label="New note"
+              tooltip="New note"
+              variant="primary"
+            >
+              <IcPlus size={16} />
+            </IconButton>
           </div>
         </header>
         {notes.length === 0 ? (
@@ -599,9 +672,20 @@ export function NotesPage() {
         ) : (
           <ul className="notes-page__list">
             {notes.map((n) => {
-              const preview = n.locked
-                ? '🔒 Locked note'
-                : (n.body || '').replace(/\s+/g, ' ').slice(0, 80);
+              // `decrypted` only ever holds plaintext for the currently
+              // selected note (see selection-change effect above), so this
+              // open-lock view only ever applies to the one row the user is
+              // actively looking at. The note itself stays encrypted on
+              // disk — we just stop pretending the body is unknown in the
+              // list when we already have it in memory.
+              const isViewingLocked =
+                n.locked && decrypted?.noteId === n.id;
+              const previewText = n.locked
+                ? isViewingLocked
+                  ? decrypted!.body
+                  : 'Locked note'
+                : n.body || '';
+              const preview = previewText.replace(/\s+/g, ' ').slice(0, 80);
               const title = (n.title || PLACEHOLDER_TITLE).trim() || PLACEHOLDER_TITLE;
               return (
                 <li key={n.id}>
@@ -613,7 +697,21 @@ export function NotesPage() {
                     <div className="notes-page__list-title">
                       {n.pinned ? <span className="notes-page__pin" aria-hidden>★</span> : null}
                       <span>{title}</span>
-                      {n.locked ? <IcLock size={12} /> : null}
+                      {n.locked ? (
+                        isViewingLocked ? (
+                          <IcUnlock
+                            size={12}
+                            className="notes-page__list-lock notes-page__list-lock--open"
+                            aria-label="Unlocked for viewing"
+                          />
+                        ) : (
+                          <IcLock
+                            size={12}
+                            className="notes-page__list-lock"
+                            aria-label="Locked"
+                          />
+                        )
+                      ) : null}
                     </div>
                     <div className="notes-page__list-preview">{preview || '—'}</div>
                     <time className="notes-page__list-time" dateTime={n.updatedAt}>
@@ -641,61 +739,96 @@ export function NotesPage() {
                 disabled={selected.locked && !editorReady}
               />
               <div className="notes-page__main-actions">
-                <button
-                  type="button"
-                  className={`btn btn--sm${selected.pinned ? ' btn--primary' : ''}`}
+                <IconButton
                   onClick={onTogglePinned}
-                  title={selected.pinned ? 'Unpin' : 'Pin to top'}
+                  label={selected.pinned ? 'Unpin' : 'Pin to top'}
+                  tooltip={selected.pinned ? 'Unpin' : 'Pin to top'}
+                  pressed={!!selected.pinned}
                 >
-                  <IcStar size={14} />
-                </button>
-                {selected.locked ? (
-                  <button
-                    type="button"
-                    className="btn btn--sm"
-                    onClick={() => requestAction('unlock-selected')}
-                    disabled={busy}
-                    title="Unlock note"
-                  >
-                    <IcLock size={14} /> Unlock
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    className="btn btn--sm"
+                  <IcStar size={16} />
+                </IconButton>
+
+                {/* Lock state toolbar button. Three states:
+                    - Unlocked → "Lock note": encrypts and hides the body
+                    - Locked + viewing (decrypted in memory) → "Hide": clears
+                      the in-memory plaintext so the locked screen returns
+                    - Locked + hidden → "Unlock to view": prompts passphrase
+                      if needed, then decrypts into memory for reading */}
+                {!selected.locked ? (
+                  <IconButton
                     onClick={() => requestAction('lock')}
                     disabled={busy}
-                    title="Lock note"
+                    label="Lock note"
+                    tooltip="Lock note"
                   >
-                    <IcLock size={14} /> Lock
-                  </button>
+                    <IcLock size={16} />
+                  </IconButton>
+                ) : editorReady ? (
+                  <IconButton
+                    onClick={hideSelected}
+                    disabled={busy}
+                    label="Hide note"
+                    tooltip="Hide content (re-lock view)"
+                  >
+                    <IcEyeOff size={16} />
+                  </IconButton>
+                ) : (
+                  <IconButton
+                    onClick={() => requestAction('view')}
+                    disabled={busy}
+                    label="Unlock to view"
+                    tooltip="Unlock to view"
+                  >
+                    <IcUnlock size={16} />
+                  </IconButton>
                 )}
-                <button
-                  type="button"
-                  className="btn btn--sm btn--danger"
+
+                {/* "Remove lock permanently" — only meaningful for locked
+                    notes, and only after the user has unlocked it for
+                    viewing (so we don't ask for the passphrase twice). */}
+                {selected.locked && editorReady ? (
+                  <IconButton
+                    onClick={() => requestAction('unlock-selected')}
+                    disabled={busy}
+                    label="Remove lock"
+                    tooltip="Remove lock from this note (decrypt permanently)"
+                  >
+                    <IcKey size={16} />
+                  </IconButton>
+                ) : null}
+
+                <IconButton
                   onClick={() => setConfirmRemoveId(selected.id)}
-                  title="Delete note"
+                  label="Delete note"
+                  tooltip="Delete note"
+                  variant="danger"
                 >
-                  <IcTrash size={14} />
-                </button>
+                  <IcTrash size={16} />
+                </IconButton>
               </div>
             </header>
 
             {selected.locked && !editorReady ? (
               <div className="notes-page__locked">
-                <IcLock size={20} />
-                <h3>This note is locked.</h3>
+                <div className="notes-page__locked-badge" aria-hidden>
+                  <IcLock size={28} />
+                </div>
+                <h3>This note is locked</h3>
                 {busy ? (
                   <p>Decrypting…</p>
                 ) : (
                   <>
-                    <p>Unlock it to read or edit. The body is encrypted at rest with your Notes passphrase.</p>
+                    <p>
+                      Enter your Notes passphrase to view this note. The body is encrypted at rest and
+                      will only be readable while you keep it unlocked.
+                    </p>
                     <button
                       type="button"
                       className="btn btn--primary"
-                      onClick={() => requestAction('unlock-selected')}
+                      onClick={() => requestAction('view')}
                     >
-                      Unlock note
+                      <IcUnlock size={14} />
+                      <span style={{ marginLeft: 6 }}>Unlock to view</span>
                     </button>
                   </>
                 )}
@@ -1148,6 +1281,58 @@ function unlockDialogButton(intent: PendingIntent | null): string {
     default:
       return 'Unlock';
   }
+}
+
+/**
+ * Compact, icon-only action button used across the Notes header bars.
+ *
+ * Why a tiny local component instead of the project-wide `Button`: that one
+ * always inflates to the `.btn--small` 34px square via min-height/min-width
+ * (good for general toolbars). Notes wants tighter pill chips that line up
+ * neatly inside the slim 12px-padded sidebar header. We also bake in the
+ * `aria-label` + native `title` (tooltip-on-hover) pair so every callsite
+ * gets accessibility for free and we never end up with an unlabelled icon.
+ */
+function IconButton({
+  children,
+  onClick,
+  disabled,
+  label,
+  tooltip,
+  variant = 'ghost',
+  pressed,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+  /** Used as `aria-label` for screen readers. */
+  label: string;
+  /** Native browser tooltip text. Defaults to `label`. */
+  tooltip?: string;
+  variant?: 'ghost' | 'primary' | 'danger';
+  /** When true, paints the button with the accent fill (e.g. pinned state). */
+  pressed?: boolean;
+}) {
+  const cls = [
+    'notes-icon-btn',
+    `notes-icon-btn--${variant}`,
+    pressed ? 'notes-icon-btn--pressed' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+  return (
+    <button
+      type="button"
+      className={cls}
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={label}
+      aria-pressed={pressed}
+      title={tooltip ?? label}
+    >
+      {children}
+    </button>
+  );
 }
 
 /**

@@ -948,6 +948,17 @@ function createWindow() {
   const devUrl = process.env.VITE_DEV_SERVER_URL;
   if (devUrl) {
     mainWindow.loadURL(devUrl);
+    // Dev convenience: log every renderer load failure to the main-process
+    // console so a "stuck on blank window" symptom always has a paper trail
+    // visible in the terminal that started `npm run dev`. Without this the
+    // user sees a black window and has to manually pop DevTools to figure
+    // out whether Vite is even reachable.
+    mainWindow.webContents.on('did-fail-load', (_e, errorCode, errorDesc, validatedURL) => {
+      console.error(LOG_TAG, 'renderer failed to load', { errorCode, errorDesc, validatedURL });
+    });
+    mainWindow.webContents.on('render-process-gone', (_e, details) => {
+      console.error(LOG_TAG, 'renderer process gone', details);
+    });
   } else {
     mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   }
@@ -2088,19 +2099,40 @@ app.on('web-contents-created', (_e, contents) => {
 
 app.whenReady().then(() => {
   // Install a baseline Content-Security-Policy for the renderer.
+  //
+  // Dev vs prod split: in production the bundle is a fixed set of `self`
+  // assets, so we can be strict. In dev, Vite injects:
+  //   - an inline `<script type="module">` with the React-Refresh preamble
+  //     (would be blocked by `script-src 'self'` without `'unsafe-inline'`)
+  //   - inline `eval`-ish module wrappers for HMR (need `'unsafe-eval'`)
+  //   - a websocket back to the dev server (need `ws:` in `connect-src`)
+  // Locking those down in dev produces a black/blank window because the
+  // first inline script in `index.html` is refused, so React never mounts.
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
-    const csp = [
-      "default-src 'self'",
-      "script-src 'self'",
-      // Vite injects inline styles; Google Fonts CSS is loaded from googleapis.
-      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-      "font-src 'self' data: https://fonts.gstatic.com",
-      "img-src 'self' data: blob:",
-      "connect-src 'self' https://api.github.com https://github.com https://api.anthropic.com https://api.openai.com https://generativelanguage.googleapis.com",
-      "object-src 'none'",
-      "base-uri 'self'",
-      "frame-ancestors 'none'",
-    ].join('; ');
+    const csp = (IS_DEV
+      ? [
+          "default-src 'self'",
+          "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+          "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+          "font-src 'self' data: https://fonts.gstatic.com",
+          "img-src 'self' data: blob:",
+          "connect-src 'self' ws: wss: http://localhost:* https://api.github.com https://github.com https://api.anthropic.com https://api.openai.com https://generativelanguage.googleapis.com",
+          "object-src 'none'",
+          "base-uri 'self'",
+          "frame-ancestors 'none'",
+        ]
+      : [
+          "default-src 'self'",
+          "script-src 'self'",
+          "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+          "font-src 'self' data: https://fonts.gstatic.com",
+          "img-src 'self' data: blob:",
+          "connect-src 'self' https://api.github.com https://github.com https://api.anthropic.com https://api.openai.com https://generativelanguage.googleapis.com",
+          "object-src 'none'",
+          "base-uri 'self'",
+          "frame-ancestors 'none'",
+        ]
+    ).join('; ');
 
     callback({
       responseHeaders: {
